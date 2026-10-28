@@ -1,0 +1,1492 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>매장 방문 지도</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1d1d1f; --muted: #6e6e73; --line: #e5e5ea; --chip: #f2f2f7;
+    --ok: #03a94d; --weak: #f5a400; --none: #e5484d; --unk: #7c3aed; --accent: #03c75a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif; }
+  /* 네이버 지도가 #map 에 position:relative 를 덮어써도 크기가 유지되도록 바깥 상자에서 위치를 잡음.
+     지도 회전: #mapRot 를 CSS로 돌리고(네이버 웹 지도는 회전 기능이 없음), 손가락 조작은 직접 처리 */
+  #mapWrap { position: absolute; inset: 0; overflow: hidden; touch-action: none; background: #eceae4; }
+  #mapRot { position: absolute; left: 50%; top: 50%; transform-origin: 50% 50%; will-change: transform; }
+  #map { width: 100%; height: 100%; }
+  #logoSlot { position: absolute; left: 0; bottom: 0; z-index: 5; pointer-events: none; }
+  #logoSlot > * { position: absolute !important; left: 2px !important; bottom: calc(env(safe-area-inset-bottom) + 2px) !important;
+    top: auto !important; right: auto !important; transform: none !important; margin: 0 !important; }
+  #logoSlot a, #logoSlot img { pointer-events: auto; }
+  .mk { position: relative; }
+  .mk.up { transform: rotate(var(--mr, 0deg)); transform-origin: 50% 50%; }   /* 지도가 돌아가도 핀 숫자·이름은 똑바로 */
+  .bar { position: absolute; top: 0; left: 0; right: 0; z-index: 10; padding: calc(env(safe-area-inset-top) + 8px) 10px 8px;
+    background: rgba(255,255,255,.96); border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+  .row { display: flex; gap: 6px; align-items: center; }
+  select, input[type=search] { font: inherit; font-size: 15px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--fg); min-width: 0; }
+  select { flex: 0 0 auto; max-width: 46%; }
+  input[type=search] { flex: 1; }
+  .chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+  .chip { flex: 0 0 auto; font-size: 13px; padding: 5px 10px; border-radius: 999px; background: var(--chip); border: 1px solid transparent; color: var(--fg); }
+  .chip.on { background: #e8f8ef; border-color: var(--accent); color: #027a39; font-weight: 600; }
+  .chip.st.off { opacity: .55; text-decoration: line-through; }
+  .chip i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: 1px; }
+  .stat { font-size: 12px; color: var(--muted); }
+  .fab { position: absolute; right: 12px; z-index: 10; width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--line);
+    background: #fff; font-size: 20px; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+  #locBtn { bottom: calc(env(safe-area-inset-bottom) + 24px); color: #555; display: flex; align-items: center; justify-content: center; padding: 0; }
+  #locBtn.follow, #locBtn.face { background: #1a73e8; border-color: #1a73e8; color: #fff; }
+  #northBtn { bottom: calc(env(safe-area-inset-bottom) + 128px); display: none; align-items: center; justify-content: center; padding: 0; }
+  #northBtn svg { transition: none; }
+  #toast { position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 130px); transform: translateX(-50%); z-index: 26;
+    background: rgba(0,0,0,.82); color: #fff; font-size: 13px; padding: 8px 14px; border-radius: 999px; display: none;
+    max-width: calc(100% - 32px); text-align: center; line-height: 1.45; }
+  #menuBtn { bottom: calc(env(safe-area-inset-bottom) + 76px); font-size: 18px; }
+  #upd { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom) + 184px); z-index: 27; display: none;
+    background: #1a73e8; color: #fff; font-size: 13px; padding: 7px 7px 7px 14px; border-radius: 999px; box-shadow: 0 4px 14px rgba(0,0,0,.22); white-space: nowrap; }
+  #upd button { margin-left: 8px; border: 0; border-radius: 999px; padding: 4px 11px; background: #fff; color: #1a73e8; font: inherit; font-weight: 700; }
+  #hint { position: absolute; left: 50%; transform: translateX(-50%); z-index: 9; top: 120px; background: rgba(0,0,0,.78);
+    color: #fff; font-size: 13px; padding: 6px 12px; border-radius: 999px; display: none; max-width: calc(100% - 24px); text-align: center; }
+  #hint button { margin-left: 6px; border: 0; border-radius: 999px; padding: 3px 10px; background: var(--accent); color: #fff;
+    font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .pin { width: 18px; height: 18px; border-radius: 50%; border: 2.5px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+  .pin.visited { opacity: .45; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid #fff; box-shadow: 0 0 2px rgba(0,0,0,.55); }
+  .dot.visited { opacity: .4; }
+  .pin.visited:not(.grp)::after { content: "✓"; color: #fff; font-size: 11px; font-weight: 700; display: block; text-align: center; line-height: 13px; }
+  /* 한 자리에 매장이 여러 개: 점은 검은 테두리, 핀은 숫자 */
+  .dot.grp { width: 13px; height: 13px; box-shadow: 0 0 0 1.5px #222, 0 1px 3px rgba(0,0,0,.5); }
+  .pin.grp { width: 22px; height: 22px; color: #fff; font-size: 11px; font-weight: 800; text-align: center; line-height: 17px;
+    text-shadow: 0 0 2px rgba(0,0,0,.7); box-shadow: 0 0 0 1.5px #222, 0 1px 4px rgba(0,0,0,.45); }
+  /* 카카오페이 SQR 매장: 노란 테두리 네모 (S2 PMS 는 동그라미) */
+  .dot.kk, .pin.kk { border-radius: 3px; border-color: #FEE500; box-shadow: 0 0 0 1px rgba(0,0,0,.5), 0 1px 3px rgba(0,0,0,.4); }
+  .dot.kk.grp, .pin.kk.grp { box-shadow: 0 0 0 1.5px #222, 0 1px 4px rgba(0,0,0,.45); }
+  .badge.kbadge { background: #FEE500 !important; color: #191919 !important; }
+  .ktag { display: inline-block; font-size: 10px; font-weight: 700; color: #191919; background: #FEE500; border-radius: 4px; padding: 0 4px; margin-left: 5px; vertical-align: 1px; }
+  .chip i.sq { border-radius: 2px; box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
+  .spot { margin-top: 6px; }
+  .spotRow { display: flex; align-items: center; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .spotRow > i { flex: 0 0 auto; width: 12px; height: 12px; border-radius: 50%; }
+  .spotRow b { font-size: 15px; font-weight: 600; }
+  .spotRow small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .spotRow.v { opacity: .5; }
+  .back { border: 0; background: none; color: #1a73e8; font: inherit; font-size: 14px; padding: 0 0 6px; cursor: pointer; }
+  .lbl { position: absolute; left: 22px; top: -1px; font-size: 11px; white-space: nowrap; background: rgba(255,255,255,.9); padding: 1px 4px; border-radius: 4px; color: #111; pointer-events: none; }
+  .sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 20; background: #fff; border-radius: 16px 16px 0 0;
+    box-shadow: 0 -4px 20px rgba(0,0,0,.18); padding: 14px 16px calc(env(safe-area-inset-bottom) + 16px); transform: translateY(110%); transition: transform .2s, visibility .2s; max-height: 70%; overflow-y: auto; visibility: hidden; }
+  .sheet.open { transform: none; visibility: visible; }
+  .sheet h2 { margin: 0 28px 2px 0; font-size: 19px; }
+  .sheet .sub { color: var(--muted); font-size: 13px; margin: 2px 0; }
+  .sheet .badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 6px; color: #fff; margin: 6px 0; }
+  .sheet .close { position: absolute; right: 12px; top: 10px; border: 0; background: none; font-size: 22px; color: var(--muted); }
+  .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+  .btn { font: inherit; font-size: 15px; padding: 11px; border-radius: 10px; border: 1px solid var(--line); background: #fff; text-align: center; text-decoration: none; color: var(--fg); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .btn.wide { grid-column: 1 / -1; }
+  .btn.done { background: #333; border-color: #333; color: #fff; }
+  #results { position: absolute; z-index: 15; left: 10px; right: 10px; background: #fff; border: 1px solid var(--line); border-radius: 12px; max-height: 50%; overflow-y: auto; display: none; box-shadow: 0 6px 20px rgba(0,0,0,.15); }
+  #results div { padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 14px; }
+  #results small { color: var(--muted); display: block; }
+  #msg { position: absolute; inset: 0; z-index: 30; display: none; align-items: center; justify-content: center; padding: 24px; background: #fff; text-align: center; line-height: 1.6; }
+  #menu .btn { display: block; width: 100%; margin-top: 8px; }
+  #banner { position: absolute; left: 10px; right: 10px; top: 150px; z-index: 25; display: none; background: #fff4f4; color: #9b1c1c;
+    border: 1px solid #f3b7b7; border-radius: 12px; padding: 10px 34px 10px 12px; font-size: 13px; line-height: 1.55; box-shadow: 0 4px 14px rgba(0,0,0,.12); }
+  #banner .x { position: absolute; right: 8px; top: 4px; border: 0; background: none; font-size: 20px; color: #9b1c1c; }
+  #login { position: absolute; inset: 0; z-index: 40; display: none; align-items: center; justify-content: center; padding: 20px; background: rgba(0,0,0,.45); }
+  #login .card { width: 100%; max-width: 360px; background: #fff; border-radius: 16px; padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+  #login h2 { margin: 0 0 6px; font-size: 20px; }
+  #login label { display: block; font-size: 13px; color: var(--muted); margin-top: 12px; }
+  #login input { display: block; width: 100%; margin-top: 4px; font: inherit; font-size: 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+  #login .err { color: var(--none); font-size: 13px; min-height: 18px; margin: 8px 0 4px; }
+  #login .btn { width: 100%; }
+  #diag { font-size: 12px; color: #333; white-space: pre-wrap; word-break: break-all; background: var(--chip); border-radius: 8px; padding: 8px 10px; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div id="mapWrap"><div id="mapRot"><div id="map"></div></div><div id="logoSlot"></div></div>
+
+<div class="bar" id="bar">
+  <div class="row">
+    <select id="area"></select>
+    <input id="q" type="search" placeholder="매장명 검색 (한글/영문)">
+  </div>
+  <div class="chips" id="chips"></div>
+  <div class="stat" id="stat">불러오는 중…</div>
+</div>
+<div id="results"></div>
+<div id="hint">지도를 확대하면 핀이 보여요</div>
+<div id="banner"><button class="x" onclick="this.parentNode.style.display='none'">×</button><div id="bannerText"></div></div>
+<button class="fab" id="menuBtn" title="메뉴">☰</button>
+<button class="fab" id="northBtn" title="북쪽이 위로 오게 되돌리기"><svg id="northSvg" width="26" height="26" viewBox="0 0 26 26">
+  <path d="M13 2 L17.5 13 L8.5 13 Z" fill="#e5484d"/><path d="M13 24 L17.5 13 L8.5 13 Z" fill="#9aa0a6"/></svg></button>
+<button class="fab" id="locBtn" title="내 위치"><span id="locIcon">◎</span></button>
+<div id="toast"></div>
+<div id="upd"></div>
+
+<div class="sheet" id="sheet"><button class="close" onclick="closeSheet()">×</button><div id="sheetBody"></div></div>
+<div class="sheet" id="menu"><button class="close" onclick="closeMenu()">×</button>
+  <h2>메뉴</h2>
+  <div id="menuLocal">
+    <p class="sub">방문 기록은 이 휴대폰 브라우저에만 저장돼요. 브라우저 데이터를 지우기 전에 백업해 두세요.</p>
+    <button class="btn" onclick="exportVisited()">방문 기록 백업 (파일 저장)</button>
+    <label class="btn" style="cursor:pointer">방문 기록 불러오기<input type="file" accept=".json" hidden onchange="importVisited(this.files[0])"></label>
+    <button class="btn" onclick="resetVisited()">방문 기록 전체 초기화</button>
+  </div>
+  <div id="menuTeam" style="display:none">
+    <p class="sub" id="teamInfo"></p>
+    <button class="btn" onclick="syncNow()">지금 동기화</button>
+    <button class="btn" onclick="changeName()">내 이름 바꾸기</button>
+    <button class="btn" onclick="logout()">팀 코드 다시 입력</button>
+  </div>
+  <button class="btn" onclick="resetView()">지도 위치 초기화 (서울역)</button>
+  <div id="menuAdmin" style="display:none">
+    <p class="sub" style="margin-top:14px"><b>관리자</b> (잠그지 않은 stores.json 으로 열었을 때만 보여요)</p>
+    <button class="btn primary" onclick="publishTeamUpdate()">이번 리스트 팀에 반영하기</button>
+    <p class="sub">잠긴 데이터 파일(stores.enc)을 만들고, 구글 시트 '매장목록'에 이번 리스트를 합쳐요.</p>
+  </div>
+  <p class="sub" style="margin-top:14px"><b>진단 정보</b> — 지도가 안 보이면 이 부분을 캡처해서 보내주세요.</p>
+  <div id="diag"></div>
+</div>
+<div id="msg"></div>
+<div id="login"><div class="card">
+  <h2>매장 방문 지도</h2>
+  <div class="sub" id="loginDesc" style="color:var(--muted);font-size:13px"></div>
+  <label id="nameRow">내 이름 <span style="font-size:12px">(방문 기록에 표시돼요)</span><input id="loginName" placeholder="예: 정지훈" autocomplete="name"></label>
+  <label id="codeRow">팀 코드<input id="loginCode" type="password" placeholder="팀장님께 받은 코드" autocomplete="current-password"></label>
+  <div class="err" id="loginErr"></div>
+  <button class="btn primary" id="loginBtn">시작하기</button>
+</div></div>
+
+<script src="config.js"></script>
+<script>
+/* 설정은 config.js 에 있어요 (index.html 을 새 버전으로 바꿔도 설정이 그대로 남도록) */
+const CFG = window.STOREMAP_CONFIG || {};
+const NAVER_MAPS_CLIENT_ID = CFG.naverClientId || "ubcgbdyb3h";   // 네이버 클라우드 Maps Client ID
+const TEAM_SYNC_URL = (CFG.teamSyncUrl || "").trim();             // 팀 방문 기록 공유용 구글 Apps Script 웹 앱 주소
+
+const STATUS = {
+  ok:   { label: "네이버 확인됨",   color: "var(--ok)" },
+  weak: { label: "확인 필요",       color: "var(--weak)" },
+  none: { label: "네이버에 없음",   color: "var(--none)" },
+  unk:  { label: "미확인",          color: "var(--unk)" },
+};
+const MAX_PINS = 2500;         // 화면에 동시에 그릴 최대 핀 수 (넘으면 확대 안내)
+const PIN_MAX = 600;           // 이보다 많으면 작은 점으로 표시
+const LABEL_ZOOM = 17;         // 이 줌 이상에서 매장명 라벨 표시
+const LS_KEY = "storemap.visited.v1", LS_PREF = "storemap.prefs.v1", LS_USER = "storemap.user.v1",
+      LS_QUEUE = "storemap.queue.v1", LS_TEAMCACHE = "storemap.team.v1", LS_MIGRATED = "storemap.migrated.v1",
+      LS_ADMIN = "storemap.admin.v1";
+const IS_LOCAL = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+
+let stores = [], byId = new Map(), map, markers = new Map(), visited = {}, current = null, meMarker = null;
+let spotList = null, sheetFromList = false, lastMode = "dot";   // 한 자리에 여러 매장일 때 보여 준 목록
+let session = {}, dataSource = "", teamState = {}, pending = [], flushing = false, lastSync = 0, syncErr = "";
+let prefs = { area: "", status: { ok: true, weak: true, none: true, unk: true }, showVisited: false, src: { p: true, k: true } };
+const srcOf = (s) => (s.src === "k" ? "k" : "p");        // p = S2 PMS, k = 카카오페이 SQR
+const SRC_LABEL = { p: "S2 PMS", k: "카카오페이 SQR" };
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function lsGet(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } }
+function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+
+const st = (s) => s.s || "unk";
+// 이름: 네이버 확인된 한글명 > 로마자 이름의 한글 추정 > PMS 이름
+const nameOf = (s) => (s.s === "ok" && s.k) ? s.k : (s.kg || s.n);
+const isGuess = (s) => !(s.s === "ok" && s.k) && !!s.kg;
+// 핀 위치: 네이버 매장 위치 > 주소 기준 좌표(Geocoding) > PMS 원본 좌표 — 한국 밖의 이상한 좌표(예: 91, 181)는 건너뜀
+const inKorea = (y, x) => typeof y === "number" && typeof x === "number" && y > 33 && y < 39 && x > 124 && x < 132;
+function posInfo(s) {
+  if (s.s === "ok" && inKorea(s.ny, s.nx)) return { p: [s.ny, s.nx], src: "네이버 매장 위치" };
+  if (inKorea(s.gy, s.gx)) return { p: [s.gy, s.gx], src: "주소 기준 위치" };
+  if (inKorea(s.y, s.x)) return { p: [s.y, s.x], src: "PMS 원본 좌표 (부정확할 수 있음)" };
+  return { p: null, src: "좌표 없음 — 지도에 표시할 수 없어요" };
+}
+const posOf = (s) => posInfo(s).p;
+const posLabel = (s) => posInfo(s).src;
+
+const DIAG = { authFailed: false, initFired: false, errors: [] };
+window.addEventListener("error", (e) => DIAG.errors.push(String(e.message || e.type)));
+window.addEventListener("unhandledrejection", (e) => DIAG.errors.push("Promise: " + String(e.reason)));
+function showBanner(html) { $("bannerText").innerHTML = html; $("banner").style.display = "block"; }
+
+function showMsg(html) { $("msg").innerHTML = html; $("msg").style.display = "flex"; }
+
+/* ---------- 초기화 ---------- */
+window.navermap_authFailure = () => (DIAG.authFailed = true, showMsg(
+  "<div><b>네이버 지도 인증 실패</b><br>네이버 클라우드 콘솔 › Maps › Application › 인증 정보 › Web 서비스 URL에<br><b>http://" +
+  esc(location.hostname) + "</b><br>이 등록돼 있는지 확인하세요. (포트 번호·경로 없이 입력)</div>"));
+
+function loadNaver() {
+  if (!NAVER_MAPS_CLIENT_ID || NAVER_MAPS_CLIENT_ID.startsWith("여기에")) {
+    showMsg("<div>index.html 맨 아래쪽 <b>NAVER_MAPS_CLIENT_ID</b> 에<br>발급받은 Client ID를 넣어주세요.</div>");
+    return;
+  }
+  const sc = document.createElement("script");
+  sc.src = "https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=" + encodeURIComponent(NAVER_MAPS_CLIENT_ID) + "&callback=init";
+  sc.onerror = () => showMsg("네이버 지도 스크립트를 불러오지 못했어요. 인터넷 연결을 확인하세요.");
+  document.head.appendChild(sc);
+}
+
+async function init() {
+  prefs = Object.assign(prefs, lsGet(LS_PREF, {}));
+  prefs.src = Object.assign({ p: true, k: true }, prefs.src);
+  let data;
+  try { data = await loadData(); }
+  catch (e) { showMsg(esc(e.message)); return; }
+  const needName = !!TEAM_SYNC_URL, needCode = !!data.enc || !!TEAM_SYNC_URL;
+  if (needName || needCode) {
+    let res;
+    try { res = await ensureSession(data.enc, needName, needCode); } catch (e) { return; }
+    session = res.sess;
+    if (res.stores) data.stores = res.stores;
+  }
+  byId = new Map(data.stores.map((s) => [s.i, s]));       // 같은 매장이 두 번 있으면 하나만
+  stores = byId.size === data.stores.length ? data.stores : [...byId.values()];
+  indexStores();
+  loadVisited();
+  layoutMap();
+  map = new naver.maps.Map("map", {
+    center: new naver.maps.LatLng(37.5563, 126.9723), zoom: 14,
+    scaleControl: false, mapDataControl: false, logoControlOptions: { position: naver.maps.Position.BOTTOM_LEFT },
+    // 이동·확대·회전은 아래 '손가락 조작'에서 직접 처리 (지도를 돌린 상태에서도 손가락 방향대로 움직이도록)
+    draggable: false, pinchZoom: false, scrollWheel: false, keyboardShortcuts: false,
+    disableDoubleTapZoom: true, disableDoubleClickZoom: true, disableTwoFingerTapZoom: true,
+  });
+  buildAreaSelect();
+  buildChips();
+  naver.maps.Event.addListener(map, "idle", scheduleRender);
+  naver.maps.Event.addListener(map, "click", () => { closeSheet(); $("results").style.display = "none"; });
+  naver.maps.Event.addListener(map, "init", () => { DIAG.initFired = true; if (prefs.area) fitArea(); render(); });
+  $("q").addEventListener("input", onSearch);
+  $("locBtn").onclick = onLocBtn;
+  $("northBtn").onclick = onNorthBtn;
+  initGestures();
+  applyTransform();
+  $("menuBtn").onclick = openMenu;
+  positionOverlays();
+  if (prefs.area) fitArea();
+  render();
+  setTimeout(checkTiles, 7000);
+  if (TEAM_SYNC_URL) startTeamSync();
+}
+
+/* ---------- 데이터 파일 (stores.json 또는 팀 코드로 잠근 stores.enc) ---------- */
+async function loadData() {
+  const order = IS_LOCAL ? ["stores.json", "stores.enc"] : ["stores.enc", "stores.json"];
+  for (const f of order) {
+    let r;
+    try { r = await fetch(f, { cache: "no-cache" }); } catch (e) { continue; }
+    if (!r.ok) continue;
+    dataSource = f;
+    if (f === "stores.json") return { stores: await r.json() };
+    return { enc: await r.arrayBuffer() };
+  }
+  throw new Error("매장 데이터 파일(stores.enc 또는 stores.json)을 찾지 못했어요. index.html과 같은 곳에 올렸는지 확인하세요.");
+}
+
+async function deriveKey(code, salt, iter) {
+  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(code), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey({ name: "PBKDF2", salt, iterations: iter, hash: "SHA-256" }, base,
+                                 { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+}
+async function pipeBytes(bytes, stream) {
+  return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer());
+}
+// 파일 형식: "SMAP" | 버전(1) | 반복횟수(4) | salt(16) | iv(12) | AES-GCM(gzip(JSON))
+async function encryptStores(text, code) {
+  if (!window.CompressionStream) throw new Error("이 브라우저는 압축을 지원하지 않아요. 최신 Chrome에서 해주세요.");
+  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12)), iter = 300000;
+  const key = await deriveKey(code, salt, iter);
+  const packed = await pipeBytes(new TextEncoder().encode(text), new CompressionStream("gzip"));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, packed));
+  const out = new Uint8Array(37 + ct.length);
+  out.set([83, 77, 65, 80, 1], 0);
+  new DataView(out.buffer).setUint32(5, iter);
+  out.set(salt, 9); out.set(iv, 25); out.set(ct, 37);
+  return out;
+}
+async function decryptStores(buf, code) {
+  const b = new Uint8Array(buf);
+  if (String.fromCharCode(b[0], b[1], b[2], b[3]) !== "SMAP") throw new Error("stores.enc 파일 형식이 달라요.");
+  if (!window.DecompressionStream || !crypto.subtle) throw new Error("nogzip");
+  const iter = new DataView(b.buffer, b.byteOffset).getUint32(5);
+  const key = await deriveKey(code, b.slice(9, 25), iter);
+  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b.slice(25, 37) }, key, b.slice(37)); // 코드가 틀리면 OperationError
+  return JSON.parse(new TextDecoder().decode(await pipeBytes(new Uint8Array(plain), new DecompressionStream("gzip"))));
+}
+
+/* ---------- 로그인 (이름 · 팀 코드) ---------- */
+function showLogin(sess, needName, needCode, err) {
+  return new Promise((resolve) => {
+    $("nameRow").style.display = needName ? "" : "none";
+    $("codeRow").style.display = needCode ? "" : "none";
+    $("loginDesc").textContent = needName
+      ? "처음 한 번만 입력하면 돼요. 방문 완료를 누르면 팀 전체 지도와 구글 시트에 이름이 남아요."
+      : "팀 코드를 입력하면 매장 지도가 열려요. (처음 한 번만)";
+    $("loginName").value = sess.name || "";
+    $("loginCode").value = sess.code || "";
+    $("loginErr").textContent = err || "";
+    $("loginBtn").disabled = false;
+    $("loginBtn").textContent = "시작하기";
+    $("login").style.display = "flex";
+    const submit = () => {
+      const name = $("loginName").value.trim(), code = $("loginCode").value.trim();
+      if (needName && !name) return ($("loginErr").textContent = "이름을 입력해 주세요.");
+      if (needCode && !code) return ($("loginErr").textContent = "팀 코드를 입력해 주세요.");
+      $("loginBtn").disabled = true;
+      $("loginBtn").textContent = "확인 중…";
+      resolve({ name, code });
+    };
+    $("loginBtn").onclick = submit;
+    $("loginCode").onkeydown = $("loginName").onkeydown = (e) => { if (e.key === "Enter") submit(); };
+    setTimeout(() => (needName && !sess.name ? $("loginName") : $("loginCode")).focus(), 50);
+  });
+}
+
+async function ensureSession(encBuf, needName, needCode) {
+  let sess = lsGet(LS_USER, {}), err = "";
+  for (;;) {
+    if ((!needName || sess.name) && (!needCode || sess.code)) {
+      try {
+        let decoded = null;
+        if (encBuf) decoded = await decryptStores(encBuf, sess.code);
+        else if (TEAM_SYNC_URL) {
+          const r = await apiGet(sess.code).catch(() => null);   // 인터넷이 잠깐 안 되면 일단 진행
+          if (r && r.error === "code") throw new Error("code");
+          if (r && r.visits) { teamState = r.visits; lastSync = Date.now(); }
+        }
+        lsSet(LS_USER, sess);
+        $("login").style.display = "none";
+        return { sess, stores: decoded };
+      } catch (e) {
+        if (e.message === "nogzip") {
+          $("login").style.display = "none";
+          showMsg("이 브라우저는 팀 데이터를 열 수 없어요.<br>최신 Chrome이나 Safari(iOS 16.4 이상)로 열어 주세요.");
+          throw e;
+        }
+        err = (e.name === "OperationError" || e.message === "code") ? "팀 코드가 맞지 않아요. 다시 확인해 주세요." : "문제가 생겼어요: " + e.message;
+        sess = { ...sess, code: "" };
+      }
+    }
+    sess = await showLogin(sess, needName, needCode, err);
+  }
+}
+
+/* ---------- 팀 방문 기록 공유 (구글 시트) ---------- */
+async function apiGet(code) {
+  const r = await fetch(TEAM_SYNC_URL + "?code=" + encodeURIComponent(code), { cache: "no-store" });
+  return r.json();
+}
+async function apiPost(code, events) {
+  const r = await fetch(TEAM_SYNC_URL, { method: "POST", body: JSON.stringify({ code, events }) }); // text/plain → 사전요청 없음
+  return r.json();
+}
+
+function recompute() {
+  if (!TEAM_SYNC_URL) return;
+  const v = {};
+  for (const [id, x] of Object.entries(teamState || {})) v[id] = { u: x[0], t: x[1] };
+  for (const ev of pending) {
+    if (ev.action === "visit") v[ev.id] = { u: ev.user, t: ev.t }; else delete v[ev.id];
+  }
+  visited = v;
+}
+
+function loadVisited() {
+  if (TEAM_SYNC_URL) {
+    teamState = Object.keys(teamState).length ? teamState : lsGet(LS_TEAMCACHE, {});
+    pending = lsGet(LS_QUEUE, []);
+    recompute();
+  } else {
+    const raw = lsGet(LS_KEY, {});
+    visited = {};
+    for (const [id, x] of Object.entries(raw)) visited[id] = typeof x === "number" ? { t: x, u: "" } : x;
+  }
+}
+
+function applyTeam(visits) {
+  teamState = visits || {};
+  lsSet(LS_TEAMCACHE, teamState);
+  lastSync = Date.now();
+  syncErr = "";
+  recompute();
+  if (map) { buildChips(); render(); if (current) openSheet(current); }
+}
+
+async function pull() {
+  try {
+    const r = await apiGet(session.code);
+    if (r.error === "code") { syncErr = "팀 코드가 바뀌었어요"; return logout(true); }
+    if (r.visits) applyTeam(r.visits);
+  } catch (e) { syncErr = "연결 안 됨"; render(); }
+}
+
+async function flush() {
+  if (flushing || !pending.length) return;
+  flushing = true;
+  const batch = pending.slice();
+  try {
+    const r = await apiPost(session.code, batch);
+    if (r.error === "code") { syncErr = "팀 코드가 바뀌었어요"; flushing = false; return logout(true); }
+    if (r.ok) {
+      pending = pending.slice(batch.length);
+      lsSet(LS_QUEUE, pending);
+      applyTeam(r.visits);
+    } else { syncErr = r.error || "저장 실패"; }
+  } catch (e) { syncErr = "연결 안 됨 (나중에 자동 전송)"; render(); }
+  flushing = false;
+}
+
+function syncNow() { closeMenu(); pending.length ? flush() : pull(); }
+
+function startTeamSync() {
+  // 팀 공유 전에 이 폰에만 저장돼 있던 방문 기록이 있으면 한 번 올려 줌
+  if (!lsGet(LS_MIGRATED, false)) {
+    const old = lsGet(LS_KEY, {});
+    for (const [id, x] of Object.entries(old)) {
+      const s = stores.find((z) => z.i === id);
+      if (s) pending.push({ id, action: "visit", t: typeof x === "number" ? x : x.t, user: session.name, name: nameOf(s), area: s.g });
+    }
+    lsSet(LS_QUEUE, pending);
+    lsSet(LS_MIGRATED, true);
+    recompute();
+  }
+  pending.length ? flush() : pull();
+  setInterval(() => { if (document.visibilityState === "visible") (pending.length ? flush() : pull()); }, 60000);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") (pending.length ? flush() : pull()); });
+}
+
+function syncLabel() {
+  if (!TEAM_SYNC_URL) return "";
+  if (pending.length) return ` · 전송 대기 ${pending.length}건`;
+  if (syncErr) return ` · 팀 공유: ${syncErr}`;
+  if (lastSync) return ` · 공유 ✓ ${new Date(lastSync).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
+  return " · 팀 공유 연결 중…";
+}
+
+function changeName() {
+  const n = prompt("방문 기록에 표시할 이름", session.name || "");
+  if (!n || !n.trim()) return;
+  session.name = n.trim();
+  lsSet(LS_USER, session);
+  closeMenu();
+}
+
+function logout(codeChanged) {
+  const sess = lsGet(LS_USER, {});
+  delete sess.code;
+  lsSet(LS_USER, sess);
+  if (codeChanged) alert("팀 코드가 바뀌었어요. 새 코드를 입력해 주세요.");
+  location.reload();
+}
+
+/* ---------- 관리자: 이번 리스트를 팀에 반영 (PC에서 stores.json → stores.enc + 구글 시트 매장목록) ---------- */
+function progress(text) { setHint(text); }
+
+async function publishTeamUpdate() {
+  closeMenu();
+  if (dataSource !== "stores.json") return alert("잠그지 않은 stores.json 으로 연 지도에서만 할 수 있어요.");
+  let code = prompt("팀 코드 (팀원들이 지도에서 입력하는 코드, 8자 이상 추천)" +
+                    (TEAM_SYNC_URL ? "\n※ Apps Script 의 TEAM_CODE 와 같아야 해요." : ""), session.code || "");
+  if (code === null) return;
+  code = code.trim();
+  if (code.length < 6) return alert("6자 이상으로 정해 주세요.");
+  if (code !== session.code && prompt("새 팀 코드예요. 확인을 위해 한 번 더 입력해 주세요.") !== code)
+    return alert("두 번 입력한 코드가 달라요. 다시 해 주세요.");
+  let admin = "";
+  if (TEAM_SYNC_URL) {
+    admin = prompt("관리자 코드 (Apps Script 의 ADMIN_CODE)", lsGet(LS_ADMIN, ""));
+    if (admin === null) return;
+    admin = admin.trim();
+  }
+  publishing = true;
+  try {
+    // 1) 잠긴 데이터 파일
+    progress("팀용 데이터 파일 만드는 중…");
+    const text = await (await fetch("stores.json", { cache: "no-cache" })).text();
+    // 팀 지도에는 원본 Store ID·검색용 주소가 필요 없어서 빼고 잠가요 (파일이 작아져서 휴대폰에서 빨리 열려요)
+    const uniq = new Map(JSON.parse(text).map((s) => [s.i, s]));   // 같은 매장이 두 번 있으면 하나만 (지도와 똑같이)
+    const slim = JSON.stringify([...uniq.values()].map(({ pid, ad, ...rest }) => rest));
+    const bytes = await encryptStores(slim, code);
+    const check = await decryptStores(bytes.buffer, code);
+    if (check.length !== stores.length) throw new Error("파일 확인 실패");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
+    a.download = "stores.enc";
+    document.body.appendChild(a); a.click(); a.remove();
+    const size = bytes.length >= 1048576 ? (bytes.length / 1048576).toFixed(1) + "MB" : Math.ceil(bytes.length / 1024) + "KB";
+    let msg = `① stores.enc 저장 완료 (${size}, 매장 ${check.length.toLocaleString()}개)\n` +
+              "   → 다운로드 폴더의 stores.enc 를 GitHub 저장소에 올리세요.\n   → GitHub 에 stores.json 이 올라가 있다면 지우세요 (팀 코드 없이 볼 수 있어서).";
+    // 2) 구글 시트 매장목록에 합치기
+    if (TEAM_SYNC_URL) {
+      const week = new Date().toLocaleDateString("sv-SE");   // YYYY-MM-DD
+      const rows = stores.map((s) => {
+        const p = s._p || ["", ""];
+        return [s.i, s.pid || "", s.n, (s.s === "ok" && s.k) ? s.k : (s.kg || ""), STATUS[st(s)].label, s.ra || s.a || s.q || "", s.g, p[0], p[1],
+                SRC_LABEL[srcOf(s)]];
+      });
+      // 시트에 이미 있는 매장은 시트 줄 순서대로 보내요 → Apps Script 가 조각마다 시트의 한 구간만 고치면 돼서 훨씬 빨라요
+      progress("구글 시트 매장목록 확인 중…");
+      let order = null;
+      try {
+        const r = await (await fetch(TEAM_SYNC_URL, { method: "POST", body: JSON.stringify({ op: "ids", admin }) })).json();
+        if (r.error === "admin") throw new Error("관리자 코드가 맞지 않아요. Apps Script 의 ADMIN_CODE 를 확인하세요.\n(stores.enc 는 이미 저장됐어요)");
+        if (r.ok && Array.isArray(r.ids)) order = new Map(r.ids.map((id, i) => [id, i]));
+      } catch (e) { if (/관리자 코드/.test(e.message)) throw e; }   // 예전 Apps Script 면 순서 없이 그대로 보냄
+      if (order) {
+        const at = (row) => { const i = order.get(row[0]); return i === undefined ? Infinity : i; };
+        rows.sort((a, b) => { const x = at(a), y = at(b); return x === y ? 0 : x < y ? -1 : 1; });   // 새 매장은 맨 뒤 (원래 순서대로)
+      }
+      const CH = 10000;
+      let added = 0, updated = 0, last = {};
+      for (let part = 0, k = 0; k < rows.length; part++, k += CH) {
+        progress(`구글 시트에 올리는 중… ${Math.min(k + CH, rows.length).toLocaleString()} / ${rows.length.toLocaleString()}`);
+        const r = await (await fetch(TEAM_SYNC_URL, { method: "POST", body: JSON.stringify({
+          op: "stores", admin, week, part, last: k + CH >= rows.length, rows: rows.slice(k, k + CH) }) })).json();
+        if (r.error === "admin") throw new Error("관리자 코드가 맞지 않아요. Apps Script 의 ADMIN_CODE 를 확인하세요.\n(stores.enc 는 이미 저장됐어요)");
+        if (!r.ok) throw new Error((r.error || "구글 시트 업로드 실패") + "\n(stores.enc 는 이미 저장됐어요)");
+        added += r.added; updated += r.updated; last = r;
+      }
+      lsSet(LS_ADMIN, admin);
+      msg += `\n\n② 구글 시트 '매장목록' 반영 완료 (${week})\n   새 매장 ${added.toLocaleString()}개 · 이어진 매장 ${updated.toLocaleString()}개` +
+             ` · 이번 리스트에서 빠진 매장 ${(last.missing || 0).toLocaleString()}개\n   방문 기록은 매장별로 그대로 이어져요.`;
+    }
+    progress("");
+    alert(msg);
+  } catch (e) { progress(""); alert("중간에 멈췄어요: " + e.message); }
+  publishing = false;
+}
+
+function openMenu() {
+  closeSheet();
+  $("menuLocal").style.display = TEAM_SYNC_URL ? "none" : "";
+  $("menuTeam").style.display = TEAM_SYNC_URL ? "" : "none";
+  $("menuAdmin").style.display = dataSource === "stores.json" ? "" : "none";   // 잠그기 전(stores.json)일 때만
+  if (TEAM_SYNC_URL) {
+    $("teamInfo").innerHTML = `팀 공유 중 — <b>${esc(session.name || "")}</b> 님으로 기록돼요. 방문 기록은 팀 전체 지도와 구글 시트에 저장돼요.` +
+      `<br>${pending.length ? `전송 대기 ${pending.length}건 (인터넷 연결되면 자동 전송)` : lastSync ? "마지막 동기화 " + new Date(lastSync).toLocaleTimeString("ko-KR") : ""}`;
+  }
+  $("diag").textContent = diagText();
+  $("menu").classList.add("open");
+}
+
+function tileCount() {
+  const imgs = [...document.querySelectorAll("#map img")];
+  return { loaded: imgs.filter((i) => i.complete && i.naturalWidth > 0).length, total: imgs.length,
+           canvas: document.querySelectorAll("#map canvas").length };
+}
+
+function checkTiles() {
+  const t = tileCount();
+  if (DIAG.authFailed || t.loaded >= 3 || t.canvas) return;
+  showBanner("<b>지도 화면을 불러오지 못한 것 같아요.</b><br>① <b>Ctrl+F5</b>로 새로고침<br>" +
+    "② <b>시크릿 창(Ctrl+Shift+N)</b>에서 이 주소 열어보기 — 광고 차단 같은 확장 프로그램 때문인지 확인<br>" +
+    "③ 그래도 안 되면 오른쪽 아래 <b>☰ 메뉴 › 진단 정보</b>를 캡처해서 보내주세요.");
+}
+
+function diagText() {
+  const L = [];
+  L.push("버전: " + APP_VERSION);
+  L.push("페이지: " + location.href);
+  L.push("Client ID: " + NAVER_MAPS_CLIENT_ID);
+  L.push("지도 스크립트: " + (window.naver && naver.maps ? "로드됨" : "로드 안 됨") + " / init: " + (DIAG.initFired ? "됨" : "안 됨") +
+         " / 인증 실패 신호: " + (DIAG.authFailed ? "있음" : "없음"));
+  if (map) {
+    try {
+      const c = map.getCenter(), y = c.lat ? c.lat() : c.y, x = c.lng ? c.lng() : c.x;
+      L.push(`지도 중심: ${Number(y).toFixed(5)}, ${Number(x).toFixed(5)} / 줌 ${map.getZoom()} / 크기 ${$("map").clientWidth}x${$("map").clientHeight}`);
+      L.push(`회전: ${rot.toFixed(0)}° / 위치 모드: ${locMode} / 방향: ${heading == null ? "없음" : heading.toFixed(0) + "°"}` +
+             ` / 네이버 로고 이동: ${LOGO.found === null ? "-" : LOGO.found ? "됨" : "못 찾음"}`);
+    } catch (e) { L.push("지도 상태 오류: " + e.message); }
+  }
+  const t = tileCount();
+  L.push(`지도 타일: 이미지 ${t.loaded}/${t.total}, canvas ${t.canvas}`);
+  const cnt = { ok: 0, weak: 0, none: 0, unk: 0 };
+  let badNaver = 0, badPms = 0, noPos = 0, geo = 0;
+  for (const s of stores) {
+    cnt[st(s)]++;
+    if (s.s === "ok" && s.ny != null && !inKorea(s.ny, s.nx)) badNaver++;
+    if (!inKorea(s.y, s.x)) badPms++;
+    if (inKorea(s.gy, s.gx)) geo++;
+    if (!posOf(s)) noPos++;
+  }
+  L.push(`매장 ${stores.length}: 확인됨 ${cnt.ok} / 확인필요 ${cnt.weak} / 없음 ${cnt.none} / 미확인 ${cnt.unk} / 주소좌표 ${geo}` +
+         ` / S2 PMS ${stores.filter((s) => s.src !== "k").length} · 카카오페이 ${stores.filter((s) => s.src === "k").length}`);
+  const sample = stores.find((s) => s.s === "ok" && s.ny != null);
+  L.push(`좌표 이상: 네이버 ${badNaver} / PMS ${badPms} / 표시 불가 ${noPos}` + (sample ? ` (예: ${sample.ny}, ${sample.nx})` : ""));
+  L.push(`데이터: ${dataSource || "-"} / 팀 공유: ${TEAM_SYNC_URL ? "켜짐" : "꺼짐"}` +
+         (TEAM_SYNC_URL ? ` / ${session.name || "-"} / 대기 ${pending.length} / 마지막 ${lastSync ? new Date(lastSync).toLocaleTimeString("ko-KR") : "-"}${syncErr ? " / " + syncErr : ""}` : ""));
+  if (DIAG.errors.length) L.push("오류: " + DIAG.errors.slice(-3).join(" | "));
+  return L.join("\n");
+}
+
+function resetView() {
+  closeMenu();
+  if (locMode !== "off") setLocMode("off");
+  resetRotation();
+  map.setCenter(new naver.maps.LatLng(37.5563, 126.9723));
+  map.setZoom(14);
+}
+
+function goTo(s, zoom) {
+  const p = posOf(s);
+  if (!p) return;
+  if (locMode !== "off") setLocMode("off");
+  map.setCenter(new naver.maps.LatLng(p[0], p[1]));
+  map.setZoom(zoom);
+}
+
+function positionOverlays() {
+  const h = $("bar").offsetHeight;
+  $("results").style.top = (h + 6) + "px";
+  $("hint").style.top = (h + 10) + "px";
+}
+
+/* ---------- 필터 UI ---------- */
+function buildAreaSelect() {
+  const cnt = {}, kArea = {};
+  for (const s of stores) { cnt[s.g] = (cnt[s.g] || 0) + 1; if (s.src === "k") kArea[s.g] = true; }
+  const areas = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a]);
+  const opt = (a, label) => `<option value="${esc(a)}">${esc(label)} (${cnt[a].toLocaleString()})</option>`;
+  const pa = areas.filter((a) => !kArea[a]), ka = areas.filter((a) => kArea[a]);
+  $("area").innerHTML = `<option value="">전체 상권 (${stores.length.toLocaleString()})</option>` + (ka.length
+    ? `<optgroup label="S2 PMS 상권">${pa.map((a) => opt(a, a)).join("")}</optgroup>` +
+      `<optgroup label="카카오페이 지역">${ka.map((a) => opt(a, a.replace(/^카카오 /, ""))).join("")}</optgroup>`
+    : pa.map((a) => opt(a, a)).join(""));
+  $("area").value = prefs.area;
+  $("area").onchange = () => { prefs.area = $("area").value; lsSet(LS_PREF, prefs); buildChips(); fitArea(); render(); };
+}
+
+function buildChips() {
+  const base = prefs.area ? stores.filter((s) => s.g === prefs.area) : stores;
+  const scnt = { p: 0, k: 0 };
+  for (const s of base) scnt[srcOf(s)]++;
+  const area = base.filter((s) => prefs.src[srcOf(s)]);
+  const cnt = { ok: 0, weak: 0, none: 0, unk: 0 };
+  for (const s of area) cnt[st(s)]++;
+  const srcChips = (scnt.p && scnt.k) || (!prefs.area && stores.some((s) => s.src === "k")) ? [["p", "S2 PMS", ""], ["k", "카카오페이", "sq"]].map(([k, label, cls]) => {
+    const on = prefs.src[k];
+    return `<button class="chip sr ${on ? "on" : "off"}" data-s="${k}">${on ? "✓ " : ""}<i class="${cls}" style="background:${k === "k" ? "#FEE500" : "#9aa0a6"}"></i>` +
+      `${label} ${scnt[k].toLocaleString()}</button>`;
+  }).join("") : "";
+  const html = srcChips + Object.entries(STATUS).map(([k, v]) => {
+    const on = prefs.status[k];
+    return `<button class="chip st ${on ? "on" : "off"}" data-k="${k}" title="${on ? "눌러서 숨기기" : "눌러서 다시 보이기"}">` +
+      `${on ? "✓ " : ""}<i style="background:${v.color}"></i>${v.label} ${cnt[k].toLocaleString()}</button>`;
+  }).join("") +
+    `<button class="chip ${prefs.showVisited ? "on" : "off"}" data-k="visited">${prefs.showVisited ? "✓ " : ""}방문한 매장 보기</button>`;
+  $("chips").innerHTML = html;
+  $("chips").querySelectorAll(".chip").forEach((b) => b.onclick = () => {
+    const k = b.dataset.k, sk = b.dataset.s;
+    if (sk) prefs.src[sk] = !prefs.src[sk];
+    else if (k === "visited") prefs.showVisited = !prefs.showVisited; else prefs.status[k] = !prefs.status[k];
+    lsSet(LS_PREF, prefs); buildChips(); render();
+  });
+}
+
+function fitArea() {
+  if (locMode !== "off") setLocMode("off");
+  resetRotation();
+  const pts = stores.filter((s) => s.g === prefs.area).map(posOf).filter(Boolean);
+  if (!pts.length) return;
+  // 동떨어진 몇 개 때문에 지도가 너무 넓어지지 않게 상하위 2%는 제외
+  const qt = (arr, f) => { const a = arr.slice().sort((m, n) => m - n); return a[Math.round(f * (a.length - 1))]; };
+  const lo = pts.length > 20 ? 0.02 : 0, hi = 1 - lo;
+  const ys = pts.map((p) => p[0]), xs = pts.map((p) => p[1]);
+  try {
+    map.fitBounds(new naver.maps.LatLngBounds(new naver.maps.LatLng(qt(ys, lo), qt(xs, lo)), new naver.maps.LatLng(qt(ys, hi), qt(xs, hi))),
+                  { top: 150, bottom: 40, left: 20, right: 20 });
+  } catch (e) {
+    map.setCenter(new naver.maps.LatLng(qt(ys, 0.5), qt(xs, 0.5)));
+    map.setZoom(14);
+  }
+}
+
+/* ---------- 핀 그리기 (화면에 보이는 것만) ---------- */
+function visibleFilter(s) {
+  if (prefs.area && s.g !== prefs.area) return false;
+  if (!prefs.src[srcOf(s)]) return false;
+  if (!prefs.status[st(s)]) return false;
+  if (visited[s.i] && !prefs.showVisited) return false;
+  return posOf(s) !== null;
+}
+
+function setHint(text, btn, fn) {
+  const h = $("hint");
+  if (!text) { h.style.display = "none"; return; }
+  h.innerHTML = text + (btn ? ` <button id="hintBtn">${btn}</button>` : "");
+  h.style.display = "block";
+  if (btn) $("hintBtn").onclick = fn;
+}
+
+let renderTimer = null, lastRender = 0;
+function scheduleRender() {          // 지도가 계속 움직일 때(방향 모드 등)는 0.2초에 한 번만 다시 그림
+  if (G.active) return;              // 손가락 조작 중에는 끝난 뒤 한 번
+  clearTimeout(renderTimer);
+  renderTimer = setTimeout(() => { lastRender = Date.now(); render(); }, Math.max(0, 200 - (Date.now() - lastRender)));
+}
+
+const spotKey = (p) => p[0].toFixed(5) + "," + p[1].toFixed(5);   // 약 1m 안에 있으면 같은 자리
+
+// 매장이 10만 개가 넘어도 빨리 그리도록: 핀 위치를 미리 계산하고, 경도 순으로 정렬해 두고 화면 근처만 훑음
+let byLng = [], lngs = new Float64Array(0);
+function indexStores() {
+  for (const s of stores) { s._p = posOf(s); s._my = s._p ? mercY(s._p[0]) : 0; }
+  byLng = stores.filter((s) => s._p).sort((a, b) => a._p[1] - b._p[1]);
+  lngs = Float64Array.from(byLng, (s) => s._p[1]);
+  statKey = "";
+}
+function lowerBound(arr, v) { let lo = 0, hi = arr.length; while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m] < v) lo = m + 1; else hi = m; } return lo; }
+// 상단 '남은 매장 · 방문' 숫자: 전체 수는 필터가 바뀔 때만 세고, 방문 수는 방문 기록만 훑음
+let statKey = "", statTotal = 0;
+const inScope = (s) => (!prefs.area || s.g === prefs.area) && prefs.src[srcOf(s)];
+function scopeCounts() {
+  const key = prefs.area + "|" + prefs.src.p + "|" + prefs.src.k;
+  if (key !== statKey) { statKey = key; statTotal = 0; for (const s of stores) if (inScope(s)) statTotal++; }
+  let done = 0;
+  for (const id in visited) { const s = byId.get(id); if (s && inScope(s)) done++; }
+  return { total: statTotal, done };
+}
+
+function render() {
+  if (!map) return;
+  let V;
+  try { V = view(); } catch (e) { return; }
+  // 화면(회전된 지도 포함)에 실제로 보이는 매장만
+  const R = wrapRect(), hw = R.width / 2 + 24, hh = R.height / 2 + 24, cr = Math.cos(rad(rot)), sr = Math.sin(rad(rot));
+  const inView = (s) => {
+    const dx = s._p[1] * V.kx - V.C[0], dy = -s._my * V.ky - V.C[1];
+    return Math.abs(dx * cr - dy * sr) <= hw && Math.abs(dx * sr + dy * cr) <= hh;
+  };
+  const ext = hw * Math.abs(cr) + hh * Math.abs(sr);          // 돌아간 화면이 차지하는 가로(경도) 범위
+  const k0 = lowerBound(lngs, (V.C[0] - ext) / V.kx), k1 = lowerBound(lngs, (V.C[0] + ext) / V.kx + 1e-12);
+  const shown = [];
+  let otherArea = 0, hiddenStatus = 0;
+  for (let k = k0; k < k1; k++) {
+    const s = byLng[k];
+    if ((visited[s.i] && !prefs.showVisited) || !inView(s)) continue;
+    if (prefs.area && s.g !== prefs.area) { if (prefs.status[st(s)] && prefs.src[srcOf(s)]) otherArea++; continue; }
+    if (!prefs.status[st(s)] || !prefs.src[srcOf(s)]) { hiddenStatus++; continue; }
+    shown.push(s);
+  }
+  // 같은 자리(좌표)의 매장은 핀 하나로 묶음 → 누르면 목록에서 고름
+  const groups = new Map();
+  let tooMany = false;
+  for (const s of shown) {
+    const p = s._p, k = spotKey(p);
+    let g = groups.get(k);
+    if (!g) {
+      if (groups.size >= MAX_PINS) { tooMany = true; break; }      // 너무 많으면 더 묶을 필요 없음 (확대 안내만)
+      groups.set(k, (g = { k, p, list: [] }));
+    }
+    g.list.push(s);
+  }
+  if (big && Date.now() - (LOGO.checked || 0) > 1000) { LOGO.checked = Date.now(); moveLogoOut(); }   // 네이버가 로고를 다시 그렸을 때 대비
+  const zoom = map.getZoom();
+  const mode = (zoom >= LABEL_ZOOM && groups.size <= 120) ? "label" : (zoom >= 15 && groups.size <= PIN_MAX) ? "pin" : "dot";
+  lastMode = mode;
+
+  if (tooMany) setHint(`이 화면에 매장 ${shown.length.toLocaleString()}개 — 확대하면 핀이 보여요`);
+  else if (!shown.length && otherArea && prefs.area)
+    setHint(`이 화면에는 '${esc(prefs.area)}' 매장이 없어요 (다른 상권 매장 ${otherArea.toLocaleString()}개)`, "전체 상권 보기", () => {
+      prefs.area = ""; $("area").value = ""; lsSet(LS_PREF, prefs); buildChips(); render();
+    });
+  else if (!shown.length && hiddenStatus)
+    setHint(`숨겨 둔 상태의 매장 ${hiddenStatus.toLocaleString()}개가 있어요`, "모두 보기", () => {
+      for (const k in prefs.status) prefs.status[k] = true; lsSet(LS_PREF, prefs); buildChips(); render();
+    });
+  else setHint("");
+
+  const want = new Set(tooMany ? [] : groups.keys());
+  if (current && posOf(current)) want.add(spotKey(posOf(current)));
+  for (const [id, m] of markers) if (!want.has(id)) { m.setMap(null); markers.delete(id); }
+  for (const g of tooMany ? [] : groups.values()) {
+    g.list.sort((a, b) => (visited[a.i] ? 1 : 0) - (visited[b.i] ? 1 : 0) || nameOf(a).localeCompare(nameOf(b), "ko"));
+    const { html, sz } = markerHtml(g.list, mode);
+    const old = markers.get(g.k);
+    if (old && old.__html === html) { old.__g = g; continue; }
+    if (old) old.setMap(null);
+    const m = new naver.maps.Marker({ position: new naver.maps.LatLng(g.p[0], g.p[1]), map, zIndex: g.list.length > 1 ? 2 : 1,
+      icon: { content: html, size: new naver.maps.Size(sz, sz), anchor: new naver.maps.Point(sz / 2, sz / 2) } });
+    m.__html = html;
+    m.__g = g;
+    naver.maps.Event.addListener(m, "click", () => onSpotClick(m.__g));
+    markers.set(g.k, m);
+  }
+  const { total, done } = scopeCounts();
+  $("stat").textContent = `${prefs.area || "전체"} · 남은 매장 ${(total - done).toLocaleString()} · 방문 ${done.toLocaleString()}` +
+    ` · 이 화면 ${shown.length.toLocaleString()}개` + syncLabel();
+}
+
+// 핀 색: 매장 하나면 상태 색, 여러 개면 상태별 비율 원그래프
+function groupColor(list) {
+  const cnt = {};
+  for (const s of list) cnt[st(s)] = (cnt[st(s)] || 0) + 1;
+  const keys = Object.keys(STATUS).filter((k) => cnt[k]);
+  if (keys.length === 1) return STATUS[keys[0]].color;
+  let acc = 0;
+  return "conic-gradient(" + keys.map((k) => {
+    const a = acc / list.length * 100;
+    acc += cnt[k];
+    return `${STATUS[k].color} ${a.toFixed(1)}% ${(acc / list.length * 100).toFixed(1)}%`;
+  }).join(",") + ")";
+}
+
+function markerHtml(list, mode) {
+  const n = list.length, v = list.every((s) => visited[s.i]) ? " visited" : "", bg = groupColor(list);
+  const grp = (n > 1 ? " grp" : "") + (list.every((s) => s.src === "k") ? " kk" : "");   // 카카오페이만 있는 자리는 네모
+  if (mode === "dot") {
+    const sz = n > 1 ? 13 : 10;
+    return { sz, html: `<div class="mk" style="width:${sz}px;height:${sz}px"><div class="dot${v}${grp}" style="background:${bg}"></div></div>` };
+  }
+  const sz = n > 1 ? 22 : 18;
+  const label = mode === "label" ? `<span class="lbl" style="left:${sz + 4}px;top:${(sz - 18) / 2}px">${esc(nameOf(list[0]))}${n > 1 ? ` 외 ${n - 1}곳` : ""}</span>` : "";
+  return { sz, html: `<div class="mk up" style="width:${sz}px;height:${sz}px"><div class="pin${v}${grp}" style="background:${bg}">${n > 1 ? n : ""}</div>${label}</div>` };
+}
+
+/* ---------- 한 자리에 매장이 여러 개일 때: 목록에서 고르기 ---------- */
+function onSpotClick(g) {
+  if (!g) return;
+  const near = nearbyGroups(g);   // 좌표는 조금 달라도 핀이 겹쳐 보이는 매장
+  const entries = g.list.map((s) => ({ s, d: 0 }));
+  for (const { g: h, d } of near) for (const s of h.list) entries.push({ s, d });
+  if (entries.length === 1) return openSheet(entries[0].s);
+  openSpot(entries, near.length > 0);
+}
+
+function nearbyGroups(g) {
+  let V;
+  try { V = view(); } catch (e) { return []; }
+  const lim = lastMode === "dot" ? 12 : 20, [x0, y0] = toW(V, g.p[0], g.p[1]), out = [];
+  for (const m of markers.values()) {
+    const h = m.__g;
+    if (!h || h.k === g.k) continue;
+    const [x, y] = toW(V, h.p[0], h.p[1]), d = Math.hypot(x - x0, y - y0);
+    if (d <= lim) out.push({ g: h, d });
+  }
+  return out.sort((a, b) => a.d - b.d);
+}
+
+function openSpot(entries, near) {
+  if (entries) spotList = { entries, near };
+  if (!spotList) return;
+  current = null;
+  sheetFromList = false;
+  closeMenu();
+  const list = spotList.entries.slice().sort((a, b) => (visited[a.s.i] ? 1 : 0) - (visited[b.s.i] ? 1 : 0) || a.d - b.d ||
+    nameOf(a.s).localeCompare(nameOf(b.s), "ko"));
+  const left = list.filter((e) => !visited[e.s.i]).length;
+  $("sheetBody").innerHTML = `
+    <h2>${spotList.near ? "이 근처" : "이 자리"} 매장 ${list.length}곳</h2>
+    <div class="sub">${spotList.near ? "핀이 겹쳐 있는 매장들이에요." : "같은 건물·같은 좌표에 있는 매장들이에요."} 눌러서 고르세요.` +
+    `${left < list.length ? ` · 방문 ${list.length - left}곳` : ""}</div>
+    <div class="spot">${list.map(({ s }) => `
+      <div class="spotRow${visited[s.i] ? " v" : ""}" data-i="${esc(s.i)}"><i style="background:${STATUS[st(s)].color}"></i>
+        <div><b>${visited[s.i] ? "✓ " : ""}${esc(nameOf(s))}</b>${s.src === "k" ? '<span class="ktag">카카오</span>' : ""}
+        <small>${esc(STATUS[st(s)].label)}${nameOf(s) !== s.n ? " · " + esc(s.n) : ""}${s.q ? " · " + esc(s.q) : ""}</small></div></div>`).join("")}</div>`;
+  $("sheetBody").querySelectorAll(".spotRow").forEach((r) => (r.onclick = () => openSheet(byId.get(r.dataset.i), true)));
+  $("sheet").scrollTop = 0;
+  $("sheet").classList.add("open");
+}
+
+/* ---------- 상세 시트 ---------- */
+function openSheet(s, fromList) {
+  if (!s) return;
+  current = s;
+  sheetFromList = !!(fromList && spotList);
+  if (!sheetFromList) spotList = null;
+  closeMenu();
+  const name = nameOf(s), p = posOf(s);
+  const verified = s.s === "ok" && s.k;
+  const q = name.trim();      // 이름+주소를 같이 넣으면 네이버에서 안 나오는 경우가 많아서 이름만 (주소는 '주소로 검색' 버튼)
+  const addrQ = (s.q || s.a || "").trim();
+  const app = encodeURIComponent(location.hostname || "storemap");
+  const webUrl = "https://map.naver.com/p/search/" + encodeURIComponent(q);
+  const appUrl = `nmap://search?query=${encodeURIComponent(q)}&appname=${app}`;
+  const addrUrl = `nmap://search?query=${encodeURIComponent(addrQ)}&appname=${app}`;
+  const routeUrl = p ? `nmap://route/walk?dlat=${p[0]}&dlng=${p[1]}&dname=${encodeURIComponent(name)}&appname=${app}` : "";
+  const isV = !!visited[s.i];
+  const info = [];
+  if (name !== s.n) info.push(`${s.src === "k" ? "카카오페이" : "PMS"} 이름: ${esc(s.n)}`);
+  if (s.e && s.e !== name && s.e !== s.n) info.push(`영문: ${esc(s.e)}`);
+  if (s.s === "weak" && s.k) info.push(`네이버 후보: <b>${esc(s.k)}</b> (같은 매장인지 확인해 주세요)`);
+  info.push(esc(s.ra || s.a || s.q || ""));
+  if (s.cat) info.push(esc(s.cat));
+  info.push(`핀 위치: ${posLabel(s)}${verified && s.d != null ? ` · ${s.src === "k" ? "주소 위치" : "PMS 좌표"}와 ${s.d.toLocaleString()}m 차이` : ""}`);
+  info.push(`${esc(s.g)}${s.b ? " · 담당 " + esc(s.b) : ""}`);
+  if (isV) info.push(`<b>방문 완료</b>: ${new Date(visited[s.i].t).toLocaleString("ko-KR")}${visited[s.i].u ? " · " + esc(visited[s.i].u) : ""}`);
+  $("sheetBody").innerHTML = `
+    ${sheetFromList ? `<button class="back" onclick="openSpot()">← 이 자리 매장 목록 (${spotList.entries.length}곳)</button>` : ""}
+    <h2>${esc(name)}</h2>
+    <span class="badge" style="background:${STATUS[st(s)].color}">${STATUS[st(s)].label}</span>
+    ${s.src === "k" ? `<span class="badge kbadge">카카오페이 SQR</span>` : ""}
+    ${isGuess(s) ? `<span class="badge" style="background:#8e8e93">한글 추정</span>` : ""}
+    ${s.s === "none" ? `<div class="sub" style="color:var(--none)">네이버 지도에서 같은 이름을 찾지 못했어요. 폐업·이전했거나 이름이 다를 수 있어요.</div>` : ""}
+    ${info.map((t) => `<div class="sub">${t}</div>`).join("")}
+    <div class="btns">
+      <a class="btn primary" href="${appUrl}">네이버 지도 앱</a>
+      <a class="btn" href="${addrUrl}">주소로 검색</a>
+      ${routeUrl ? `<a class="btn" href="${routeUrl}">도보 길찾기</a>` : `<span class="btn" style="opacity:.4">도보 길찾기</span>`}
+      <a class="btn" href="${webUrl}" target="_blank" rel="noopener">웹에서 검색</a>
+      <button class="btn wide ${isV ? "" : "done"}" onclick="toggleVisited('${s.i}')">${isV ? "방문 취소 (핀 다시 보이기)" : "✓ 방문 완료 (핀 숨기기)"}</button>
+    </div>`;
+  $("sheet").scrollTop = 0;
+  $("sheet").classList.add("open");
+}
+function closeSheet() { $("sheet").classList.remove("open"); current = null; spotList = null; sheetFromList = false; }
+function closeMenu() { $("menu").classList.remove("open"); }
+
+function toggleVisited(id) {
+  const s = byId.get(id);
+  const backToList = sheetFromList && spotList;
+  const wasVisited = !!visited[id];
+  if (TEAM_SYNC_URL) {
+    pending.push({ id, action: wasVisited ? "unvisit" : "visit", t: Date.now(), user: session.name || "", name: nameOf(s), area: s.g });
+    lsSet(LS_QUEUE, pending);
+    recompute();
+    flush();
+  } else {
+    if (wasVisited) delete visited[id]; else visited[id] = { t: Date.now(), u: "" };
+    lsSet(LS_KEY, visited);
+  }
+  if (backToList && visited[id]) openSpot();            // 같은 자리 매장 목록으로 돌아가서 다음 매장 고르기
+  else if (visited[id] && !prefs.showVisited) closeSheet();
+  else openSheet(s, backToList);
+  render();
+}
+
+/* ---------- 검색 ---------- */
+function onSearch() {
+  const raw = $("q").value.trim().toLowerCase().replace(/\s+/g, "");
+  const box = $("results");
+  if (raw.length < 2) { box.style.display = "none"; return; }
+  const hit = [];
+  for (const s of stores) {
+    if (prefs.area && s.g !== prefs.area) continue;
+    const hay = (s.n + (s.k || "") + (s.kg || "") + (s.e || "") + (s.a || "")).toLowerCase().replace(/\s+/g, "");
+    if (hay.includes(raw)) { hit.push(s); if (hit.length >= 40) break; }
+  }
+  box.innerHTML = hit.length ? hit.map((s) => `<div data-i="${esc(s.i)}">${visited[s.i] ? "✓ " : ""}${esc(nameOf(s))}${s.src === "k" ? '<span class="ktag">카카오</span>' : ""}<small>${esc(s.q || s.a)} · ${esc(s.g)}${posOf(s) ? "" : " · 위치 없음"}</small></div>`).join("")
+    : `<div>결과 없음${prefs.area ? " (선택한 상권 안에서 검색 중)" : ""}</div>`;
+  box.style.display = "block";
+  box.querySelectorAll("[data-i]").forEach((d) => d.onclick = () => {
+    const s = byId.get(d.dataset.i);
+    box.style.display = "none"; $("q").blur();
+    goTo(s, 18);
+    openSheet(s);
+  });
+}
+
+/* ---------- 내 위치 · 바라보는 방향 ----------
+   ◎ 버튼 (네이버 지도 앱처럼):  꺼짐 → [따라가기: 내 위치가 가운데, 파란 부채꼴 = 바라보는 방향]
+                                  → [방향 모드: 바라보는 방향이 위로 오게 지도가 같이 돌아감] → 따라가기(북쪽 위) → …
+   지도를 손으로 끌면 따라가기가 꺼져요. */
+let locMode = "off", watchId = null, myPos = null, heading = null, smoothVec = null, compassOn = false, drawPending = false;
+const ARROW_SVG = '<svg width="22" height="22" viewBox="0 0 24 24"><path d="M12 2 L19.5 21 L12 16.8 L4.5 21 Z" fill="currentColor"/></svg>';
+const ME_HTML = '<div style="position:relative;width:60px;height:60px;pointer-events:none">' +
+  '<svg id="meCone" width="60" height="60" viewBox="0 0 60 60" style="position:absolute;left:0;top:0;display:none;transform-origin:50% 50%">' +
+  '<path d="M30 30 L17 3 A30 30 0 0 1 43 3 Z" fill="rgba(26,115,232,.32)"/></svg>' +
+  '<div style="position:absolute;left:21px;top:21px;width:18px;height:18px;border-radius:50%;background:#1a73e8;border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)"></div></div>';
+
+function toast(t) {
+  const el = $("toast");
+  el.textContent = t;
+  el.style.display = "block";
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => (el.style.display = "none"), 3800);
+}
+
+async function onLocBtn() {
+  if (!navigator.geolocation) return toast("이 브라우저는 위치를 지원하지 않아요.");
+  if (locMode === "off") {
+    await startCompass();          // iOS는 버튼을 누를 때만 방향 권한을 물어볼 수 있어요
+    startWatch();
+    setLocMode("follow");
+    if (myPos) { centerOnMe(); map.setZoom(Math.max(map.getZoom(), 17)); }
+  } else if (locMode === "follow") {
+    if (heading == null) {         // 나침반이 없는 기기(PC 등): 예전처럼 끄기
+      setLocMode("off");
+      return toast(compassDenied ? "방향(나침반) 권한이 없어서 지도를 돌릴 수 없어요. 따라가기를 껐어요."
+                                 : "이 기기는 바라보는 방향을 알 수 없어서 지도를 돌릴 수 없어요. 따라가기를 껐어요.");
+    }
+    setLocMode("face");
+  } else {
+    setLocMode("follow");          // 방향 모드 끄기 → 북쪽이 다시 위로
+    animateRot(0);
+  }
+}
+
+function setLocMode(mode) {
+  const prev = locMode;
+  locMode = mode;
+  const b = $("locBtn");
+  b.classList.toggle("follow", mode === "follow");
+  b.classList.toggle("face", mode === "face");
+  $("locIcon").innerHTML = mode === "face" ? ARROW_SVG : "◎";
+  b.title = mode === "follow" ? "내 위치 따라가는 중 — 누르면 방향 모드" : mode === "face" ? "방향 모드 — 누르면 북쪽이 위로" : "내 위치";
+  if (mode === "follow" && prev === "off" && !compassDenied)
+    toast(compassOn || heading != null || navigator.maxTouchPoints > 0
+      ? "내 위치를 따라가요. 한 번 더 누르면 바라보는 방향이 위로 오게 지도가 돌아가요." : "내 위치를 따라가요.");
+  if (mode === "face") {
+    setBig(true);
+    if (prev !== "face") toast("바라보는 방향이 위쪽이에요. 버튼을 다시 누르면 북쪽이 위로 돌아와요.");
+    if (heading != null) { rot = normDeg(-heading); applyTransform(); }
+  }
+  if (mode === "off" && prev === "face" && Math.abs(rot) < 0.5) resetRotation();
+  if (mode !== "off" && myPos) centerOnMe();
+}
+
+function startWatch() {
+  if (watchId != null) return;
+  watchId = navigator.geolocation.watchPosition((p) => {
+    const first = !myPos;
+    myPos = { lat: p.coords.latitude, lng: p.coords.longitude };
+    // 나침반이 없는 기기: 걸어가는 방향(GPS)으로 대신
+    if (!compassOn && typeof p.coords.heading === "number" && !isNaN(p.coords.heading) && (p.coords.speed || 0) > 0.7) applyHeading(p.coords.heading);
+    updateMe();
+    if (locMode !== "off") { centerOnMe(); if (first) map.setZoom(Math.max(map.getZoom(), 17)); }
+  }, (err) => {
+    toast(err.code === 1 ? "위치 권한을 허용해 주세요. (브라우저 설정 › 사이트 권한 › 위치)" : "현재 위치를 찾지 못했어요.");
+    if (!myPos) { setLocMode("off"); navigator.geolocation.clearWatch(watchId); watchId = null; }
+  }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
+}
+
+let compassDenied = false;
+function compassHandler(e) {
+  let h = null;
+  if (typeof e.webkitCompassHeading === "number") h = e.webkitCompassHeading;     // 아이폰: 북쪽 기준 시계 방향
+  else if (e.absolute && typeof e.alpha === "number") h = 360 - e.alpha;          // 안드로이드: 절대 방향 (상대 방향 값은 무시)
+  if (h == null || isNaN(h)) return;
+  const scr = (screen.orientation && screen.orientation.angle) || window.orientation || 0;  // 가로 화면 보정
+  compassOn = true;
+  applyHeading((h + scr + 360) % 360);
+}
+
+async function startCompass() {
+  if (startCompass.started) return;
+  startCompass.started = true;
+  window.addEventListener("deviceorientationabsolute", compassHandler);   // 안드로이드 크롬
+  window.addEventListener("deviceorientation", compassHandler);           // 아이폰
+  try {
+    if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
+      const r = await DeviceOrientationEvent.requestPermission();   // 아이폰은 버튼을 누를 때 한 번 물어봐요
+      if (r !== "granted") { compassDenied = true; toast("방향(나침반) 권한을 허용하지 않아서 바라보는 방향은 표시할 수 없어요."); }
+    }
+  } catch (e) { /* 권한 요청을 지원하지 않는 브라우저 */ }
+}
+
+function applyHeading(h) {
+  const r = h * Math.PI / 180;
+  if (!smoothVec) smoothVec = [Math.cos(r), Math.sin(r)];
+  else { smoothVec[0] = smoothVec[0] * 0.75 + Math.cos(r) * 0.25; smoothVec[1] = smoothVec[1] * 0.75 + Math.sin(r) * 0.25; }
+  heading = (Math.atan2(smoothVec[1], smoothVec[0]) * 180 / Math.PI + 360) % 360;   // 흔들림을 줄인 방향
+  if (!drawPending) { drawPending = true; requestAnimationFrame(drawHeading); }
+}
+
+function drawHeading() {
+  drawPending = false;
+  const cone = document.getElementById("meCone");
+  if (cone && heading != null) { cone.style.display = ""; cone.style.transform = `rotate(${heading.toFixed(1)}deg)`; }
+  // 방향 모드: 바라보는 방향이 화면 위쪽이 되도록 지도를 반대로 돌림 (부채꼴은 늘 위를 향함)
+  if (locMode === "face" && heading != null && !G.active && !rotAnim) {
+    const target = normDeg(-heading);
+    if (Math.abs(normDeg(target - rot)) > 0.4) { rot = target; applyTransform(); scheduleRender(); }   // 아주 작은 흔들림은 무시
+  }
+}
+
+function updateMe() {
+  const ll = new naver.maps.LatLng(myPos.lat, myPos.lng);
+  if (!meMarker) meMarker = new naver.maps.Marker({ map, position: ll, zIndex: 1000, clickable: false,
+    icon: { content: ME_HTML, size: new naver.maps.Size(60, 60), anchor: new naver.maps.Point(30, 30) } });
+  else meMarker.setPosition(ll);
+  if (heading != null && !drawPending) { drawPending = true; requestAnimationFrame(drawHeading); }
+}
+
+function centerOnMe() { if (myPos && !G.pan) map.setCenter(new naver.maps.LatLng(myPos.lat, myPos.lng)); }
+
+/* ---------- 지도 회전 · 손가락 조작 ----------
+   네이버 웹 지도에는 회전 기능이 없어서, 지도를 담은 상자(#mapRot)를 CSS로 돌리고 이동·확대·회전을 직접 처리해요.
+   - 한 손가락: 이동 / 두 손가락: 확대·축소, 비틀면 회전 / 두 번 톡톡: 확대 / 두 손가락 톡: 축소 / 마우스 휠: 확대·축소
+   - 돌아간 동안에는 모서리가 비지 않게 지도를 화면 대각선 크기로 키우고, 네이버 로고는 화면 왼쪽 아래로 옮겨서 계속 보이게 해요. */
+const MIN_ZOOM = 6, MAX_ZOOM = 21;
+const ROT_START = 12;                // 두 손가락을 이만큼(도) 비틀어야 회전 시작 (확대만 하려다 돌아가지 않게)
+let rot = 0, zoomScale = 1, big = false, rotAnim = 0;
+const G = { pts: new Map(), active: false, kind: "", moved: false, pan: false, suppressUntil: 0, lastTap: null, raf: 0 };
+
+const rad = (d) => d * Math.PI / 180;
+const normDeg = (d) => ((((d + 180) % 360) + 360) % 360) - 180;          // -180 ~ 180
+const rotV = (x, y, deg) => { const r = rad(deg), c = Math.cos(r), s = Math.sin(r); return [x * c - y * s, x * s + y * c]; };
+const mercY = (lat) => Math.log(Math.tan(Math.PI / 4 + rad(lat) / 2));
+const invMercY = (m) => (2 * Math.atan(Math.exp(m)) - Math.PI / 2) * 180 / Math.PI;
+const latOf = (c) => (typeof c.lat === "function" ? c.lat() : c.y), lngOf = (c) => (typeof c.lng === "function" ? c.lng() : c.x);
+const wrapRect = () => $("mapWrap").getBoundingClientRect();
+const following = () => locMode !== "off" && !!myPos;
+
+function boundsBox(b) {
+  if (typeof b.south === "function") return { S: b.south(), N: b.north(), W: b.west(), E: b.east() };
+  const sw = b.getSW ? b.getSW() : b.getMin(), ne = b.getNE ? b.getNE() : b.getMax();
+  return { S: latOf(sw), N: latOf(ne), W: lngOf(sw), E: lngOf(ne) };
+}
+// 지금 화면의 축척(네이버가 알려 주는 지도 범위로 계산): 위도·경도 ↔ 지도 픽셀
+function view() {
+  const B = boundsBox(map.getBounds()), r = $("mapRot");
+  const kx = r.__w / (B.E - B.W), ky = r.__h / (mercY(B.N) - mercY(B.S));
+  if (!isFinite(kx) || !isFinite(ky) || kx <= 0 || ky <= 0) throw new Error("bounds");
+  const c = map.getCenter();
+  return { kx, ky, C: [lngOf(c) * kx, -mercY(latOf(c)) * ky] };
+}
+const toW = (V, lat, lng) => [lng * V.kx, -mercY(lat) * V.ky];
+const fromW = (V, X, Y) => new naver.maps.LatLng(invMercY(-Y / V.ky), X / V.kx);
+// 화면의 한 점(손가락 위치)이 가리키는 지도 픽셀
+function screenToW(V, px, py, C, s) {
+  const R = wrapRect(), [dx, dy] = rotV((px - R.left - R.width / 2) / s, (py - R.top - R.height / 2) / s, -rot);
+  return [C[0] + dx, C[1] + dy];
+}
+// 지도 픽셀 A 가 화면의 m 위치에 오려면 지도 중심이 어디여야 하는지
+function centerFor(V, A, m, s) {
+  if (!A) return V.C;
+  const R = wrapRect(), [ox, oy] = rotV((m[0] - R.left - R.width / 2) / s, (m[1] - R.top - R.height / 2) / s, -rot);
+  return [A[0] - ox, A[1] - oy];
+}
+
+function layoutMap() {               // 지도 크기: 평소엔 화면 크기, 돌아간 동안엔 화면 대각선 크기의 정사각형
+  const R = wrapRect(), W = Math.round(R.width), H = Math.round(R.height);
+  const D = Math.ceil(Math.hypot(W, H)) + 4, w = big ? D : W, h = big ? D : H, r = $("mapRot");
+  if (r.__w === w && r.__h === h) return;
+  const c = map ? map.getCenter() : null;
+  r.__w = w; r.__h = h;
+  Object.assign(r.style, { width: w + "px", height: h + "px", marginLeft: -w / 2 + "px", marginTop: -h / 2 + "px" });
+  if (map) {
+    try { map.setSize(new naver.maps.Size(w, h)); } catch (e) {}
+    if (c) map.setCenter(c);
+  }
+}
+
+function setBig(on) {
+  if (big === on) return;
+  big = on;
+  layoutMap();
+  if (on) { moveLogoOut(); setTimeout(moveLogoOut, 300); } else restoreLogo();
+}
+
+function applyTransform() {
+  const r = $("mapRot");
+  r.style.transform = `rotate(${rot.toFixed(2)}deg) scale(${zoomScale.toFixed(4)})`;
+  r.style.setProperty("--mr", `${(-rot).toFixed(2)}deg`);
+  const show = Math.abs(rot) > 0.5;
+  $("northBtn").style.display = show ? "flex" : "none";
+  if (show) $("northSvg").style.transform = `rotate(${rot.toFixed(1)}deg)`;
+}
+
+function resetRotation() {           // 바로 북쪽이 위로
+  cancelAnimationFrame(rotAnim); rotAnim = 0;
+  if (locMode === "face") setLocMode("follow");
+  rot = 0; applyTransform(); setBig(false);
+}
+
+function animateRot(target, ms = 320) {
+  cancelAnimationFrame(rotAnim);
+  const from = rot, delta = normDeg(target - from), t0 = performance.now();
+  const step = (t) => {
+    const k = Math.min(1, (t - t0) / ms), e = 1 - Math.pow(1 - k, 3);
+    rot = normDeg(from + delta * e);
+    applyTransform();
+    if (k < 1) { rotAnim = requestAnimationFrame(step); return; }
+    rotAnim = 0;
+    rot = normDeg(target);
+    if (Math.abs(rot) < 0.01 && locMode !== "face") { rot = 0; setBig(false); }
+    applyTransform();
+    scheduleRender();
+  };
+  rotAnim = requestAnimationFrame(step);
+}
+
+function onNorthBtn() {
+  if (locMode === "face") setLocMode("follow");
+  animateRot(0);
+}
+
+// 네이버 로고: 지도를 크게 키운 동안에는 화면 밖으로 나가므로 화면 왼쪽 아래(#logoSlot)로 옮겨 둠
+const LOGO = { el: null, parent: null, next: null, found: null };
+function findLogo() {
+  const root = $("map");
+  const sel = 'img[alt*="NAVER" i], img[src*="logo" i], a[href*="navercorp" i], a[href*="naver.com" i], [class*="logo" i], svg[aria-label*="NAVER" i]';
+  for (const c of root.querySelectorAll(sel)) {
+    if (c.closest(".mk")) continue;
+    let el = c;
+    while (el.parentElement && el.parentElement !== root) {
+      const r = el.parentElement.getBoundingClientRect();
+      if (r.width > 260 || r.height > 90) break;
+      el = el.parentElement;
+    }
+    return el;
+  }
+  return null;
+}
+function moveLogoOut() {
+  if (!big) return;
+  const el = findLogo();             // 지도 안에 있는 로고 (이미 옮겼으면 없음)
+  if (!el) { if (LOGO.found === null) LOGO.found = false; return; }
+  LOGO.found = true;
+  for (const old of [...$("logoSlot").children]) if (old !== el) old.remove();   // 네이버가 로고를 새로 만들었으면 옛것 정리
+  LOGO.el = el; LOGO.parent = el.parentElement; LOGO.next = el.nextSibling;
+  $("logoSlot").appendChild(el);
+}
+function restoreLogo() {
+  const el = LOGO.el;
+  LOGO.el = null;
+  if (!el || el.parentElement !== $("logoSlot")) return;
+  if (findLogo() || !LOGO.parent || !LOGO.parent.isConnected) return el.remove();   // 지도에 이미 로고가 있으면 옮긴 것은 정리
+  LOGO.parent.insertBefore(el, LOGO.next && LOGO.next.parentElement === LOGO.parent ? LOGO.next : null);
+}
+
+function initGestures() {
+  const el = $("mapWrap");
+  el.addEventListener("pointerdown", onPDown, true);
+  window.addEventListener("pointermove", onPMove, true);
+  window.addEventListener("pointerup", onPUp, true);
+  window.addEventListener("pointercancel", onPUp, true);
+  el.addEventListener("wheel", onWheel, { passive: false });
+  el.addEventListener("gesturestart", (e) => e.preventDefault());       // 아이폰: 화면 전체 확대 막기
+  el.addEventListener("contextmenu", (e) => e.preventDefault());
+  // 끌기·확대·회전 직후에 손을 뗀 곳의 매장 창이 열리거나 닫히지 않게 클릭을 무시
+  for (const t of ["click", "mouseup", "touchend", "dblclick"])
+    window.addEventListener(t, (e) => {
+      if (Date.now() < G.suppressUntil && el.contains(e.target)) { e.stopPropagation(); if (e.cancelable) e.preventDefault(); }
+    }, { capture: true, passive: false });
+}
+
+function onPDown(e) {
+  if (!map || (e.pointerType === "mouse" && e.button !== 0) || e.target.closest("#logoSlot")) return;
+  if (G.pts.size >= 2) return;                       // 세 번째 손가락은 무시
+  G.pts.set(e.pointerId, { x: e.clientX, y: e.clientY, target: e.target });
+  if (G.kind === "settle") return;                   // 확대 마무리 중이면 끝난 뒤 이어서
+  beginGesture();
+}
+
+function beginGesture() {
+  const P = [...G.pts.values()];
+  cancelAnimationFrame(rotAnim); rotAnim = 0;
+  G.active = true; G.moved = false; G.t0 = Date.now();
+  try { G.V = view(); } catch (e) { G.active = false; G.kind = ""; return; }
+  G.z0 = map.getZoom();
+  if (P.length === 1) {
+    G.kind = "pan"; G.start = [P[0].x, P[0].y]; G.C0 = G.V.C.slice(); G.target = P[0].target;
+  } else {
+    G.kind = "pinch"; G.rotating = false; G.rot0 = rot;
+    G.d0 = Math.max(10, Math.hypot(P[1].x - P[0].x, P[1].y - P[0].y));
+    G.a0 = Math.atan2(P[1].y - P[0].y, P[1].x - P[0].x) * 180 / Math.PI;
+    G.m = [(P[0].x + P[1].x) / 2, (P[0].y + P[1].y) / 2];
+    G.anchor = following() ? null : screenToW(G.V, G.m[0], G.m[1], G.V.C, 1);
+  }
+}
+
+function onPMove(e) {
+  const p = G.pts.get(e.pointerId);
+  if (!p) return;
+  p.x = e.clientX; p.y = e.clientY;
+  if (!G.raf) G.raf = requestAnimationFrame(stepGesture);
+}
+
+function stepGesture() {
+  G.raf = 0;
+  const P = [...G.pts.values()];
+  if (G.kind === "pan" && P.length >= 1) {
+    const dx = P[0].x - G.start[0], dy = P[0].y - G.start[1];
+    if (G.twoTap && Math.hypot(dx, dy) > 12) G.twoTap = false;
+    if (!G.moved && Math.hypot(dx, dy) < 7) return;
+    if (!G.moved) { G.moved = true; G.pan = true; if (locMode !== "off") setLocMode("off"); $("results").style.display = "none"; }
+    const [mx, my] = rotV(dx, dy, -rot);
+    map.setCenter(fromW(G.V, G.C0[0] - mx, G.C0[1] - my));
+  } else if (G.kind === "pinch" && P.length >= 2) {
+    const d = Math.hypot(P[1].x - P[0].x, P[1].y - P[0].y);
+    const a = Math.atan2(P[1].y - P[0].y, P[1].x - P[0].x) * 180 / Math.PI;
+    G.m = [(P[0].x + P[1].x) / 2, (P[0].y + P[1].y) / 2];
+    const s = Math.min(Math.max(d / G.d0, Math.pow(2, MIN_ZOOM - G.z0 - 0.45)), Math.pow(2, MAX_ZOOM - G.z0 + 0.45));
+    const da = normDeg(a - G.a0);
+    if (!G.moved && (Math.abs(s - 1) > 0.03 || Math.abs(da) > 3)) G.moved = true;
+    if (!G.rotating && Math.abs(da) > ROT_START) {
+      G.rotating = true; G.rotOff = Math.sign(da) * ROT_START;
+      if (locMode === "face") setLocMode("follow");   // 손으로 돌리면 방향 모드는 끔
+      setBig(true);
+    }
+    if (G.rotating) rot = normDeg(G.rot0 + da - G.rotOff);
+    zoomScale = s;
+    const C = centerFor(G.V, G.anchor, G.m, s);
+    map.setCenter(fromW(G.V, C[0], C[1]));
+    applyTransform();
+  }
+}
+
+function onPUp(e) {
+  const p = G.pts.get(e.pointerId);
+  if (!p) return;
+  stepGesture();                     // 마지막 위치 반영
+  G.pts.delete(e.pointerId);
+  const moved = G.moved;
+  if (moved) { G.suppressUntil = Date.now() + 350; e.stopPropagation(); }
+  if (G.kind === "pinch") {
+    G.twoTap = !moved && Date.now() - G.t0 < 300 && G.pts.size === 1 ? Date.now() : 0;   // 두 손가락으로 톡 → 축소
+    return finishPinch();
+  }
+  if (G.kind === "settle") return;
+  if (G.kind === "pan" && !G.pts.size) {
+    endGesture();
+    if (!moved && Date.now() - G.t0 < 300) onTap(e, p);
+  }
+}
+
+function endGesture() {
+  G.active = false; G.kind = ""; G.pan = false;
+  const twoTap = G.twoTap && Date.now() - G.twoTap < 450;
+  G.twoTap = 0;
+  if (twoTap && !G.pts.size) { const R = wrapRect(); zoomAt(R.left + R.width / 2, R.top + R.height / 2, -1); return; }
+  render();
+}
+
+function afterSettle() {             // 확대 마무리가 끝난 뒤: 아직 손가락이 있으면 이어서 조작
+  G.kind = "";
+  if (G.pts.size) { beginGesture(); G.moved = true; } else endGesture();
+}
+
+function onTap(e, p) {
+  const now = Date.now(), last = G.lastTap;
+  if (p.target && p.target.closest && p.target.closest(".mk")) { G.lastTap = null; return; }   // 핀은 그냥 누르기
+  if (last && now - last.t < 320 && Math.hypot(p.x - last.x, p.y - last.y) < 30) {
+    G.lastTap = null;
+    zoomAt(p.x, p.y, +1);              // 두 번 톡톡 → 확대
+  } else G.lastTap = { t: now, x: p.x, y: p.y };
+}
+
+function finishPinch() {
+  if (G.kind !== "pinch") return;
+  const V = G.V, A = G.anchor, m = G.m.slice(), z0 = G.z0, s = zoomScale;
+  const z1 = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z0 + Math.round(Math.log2(s))));
+  if (G.rotating && Math.abs(rot) < 4 && locMode !== "face") rot = 0;    // 거의 북쪽이면 딱 맞춤
+  G.kind = "settle";
+  animateScale(V, A, m, s, Math.pow(2, z1 - z0), 140, () => {
+    commitZoom(V, A, m, z0, z1);
+    if (rot === 0 && locMode !== "face") setBig(false);
+    applyTransform();
+    afterSettle();                   // 남은 손가락이 있으면 계속 이동
+  });
+}
+
+function animateScale(V, A, m, from, to, ms, done) {
+  G.active = true;
+  const finish = () => {
+    try { done(); } catch (err) { DIAG.errors.push("zoom: " + err.message); zoomScale = 1; applyTransform(); G.kind = ""; G.active = false; }
+  };
+  if (Math.abs(to - from) < 0.002) return finish();
+  const t0 = performance.now();
+  const step = (t) => {
+    try {
+      const k = Math.min(1, (t - t0) / ms), e = 1 - Math.pow(1 - k, 3);
+      zoomScale = from * Math.pow(to / from, e);
+      const C = centerFor(V, A, m, zoomScale);
+      map.setCenter(fromW(V, C[0], C[1]));
+      applyTransform();
+      if (k < 1) return requestAnimationFrame(step);
+    } catch (err) { DIAG.errors.push("zoom: " + err.message); }
+    finish();
+  };
+  requestAnimationFrame(step);
+}
+
+function commitZoom(V, A, m, z0, z1) {   // 화면은 그대로 두고 실제 줌 레벨을 바꿈
+  const C = centerFor(V, A, m, Math.pow(2, z1 - z0)), ll = fromW(V, C[0], C[1]);
+  if (z1 !== z0) map.setZoom(z1, false);
+  map.setCenter(following() ? new naver.maps.LatLng(myPos.lat, myPos.lng) : ll);
+  zoomScale = 1;
+  applyTransform();
+}
+
+function zoomAt(px, py, dz) {
+  if (G.kind === "settle") return;
+  const z0 = map.getZoom(), z1 = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z0 + dz));
+  if (z1 === z0) return;
+  let V;
+  try { V = view(); } catch (e) { return; }
+  const A = following() ? null : screenToW(V, px, py, V.C, 1), m = [px, py];
+  G.kind = "settle";
+  animateScale(V, A, m, 1, Math.pow(2, z1 - z0), 200, () => { commitZoom(V, A, m, z0, z1); afterSettle(); });
+}
+
+function onWheel(e) {
+  e.preventDefault();
+  const now = Date.now();
+  if (G.active || now - (G.wheelT || 0) < 250 || Math.abs(e.deltaY) < 1) return;
+  G.wheelT = now;
+  zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1 : -1);
+}
+
+/* ---------- 백업 ---------- */
+function exportVisited() {
+  const blob = new Blob([JSON.stringify(visited)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `방문기록_${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+}
+function importVisited(file) {
+  if (!file) return;
+  file.text().then((t) => {
+    const v = JSON.parse(t);
+    for (const [id, x] of Object.entries(v)) visited[id] = typeof x === "number" ? { t: x, u: "" } : x;
+    lsSet(LS_KEY, visited); render(); closeMenu();
+    alert(`${Object.keys(v).length}개 방문 기록을 불러왔어요.`);
+  }).catch(() => alert("파일을 읽지 못했어요."));
+}
+function resetVisited() {
+  if (!confirm("방문 기록을 모두 지울까요? (되돌릴 수 없어요)")) return;
+  visited = {}; lsSet(LS_KEY, visited); render(); closeMenu();
+}
+
+window.addEventListener("resize", () => {
+  if (!map) return;
+  positionOverlays();
+  layoutMap();
+  scheduleRender();
+});
+
+/* ---------- 새 버전 자동 적용 ----------
+   휴대폰은 페이지를 잠깐(GitHub는 최대 10분) 저장해 두고 그걸 보여 줘서, index.html 을 바꿔도 새로고침만으로는 안 바뀔 때가 있어요.
+   열 때·다시 볼 때마다 서버의 index.html 버전을 확인해서, 다르면 새 버전으로 다시 열어요. (index.html 을 고칠 때마다 아래 버전도 바꿈) */
+const APP_VERSION = "2026-10-28.4";
+let updLast = 0, publishing = false;
+const appBase = () => location.pathname.replace(/[^/]*$/, "");
+async function checkUpdate(atStart) {
+  if (!atStart && Date.now() - updLast < 3 * 60000) return;
+  updLast = Date.now();
+  let latest = null;
+  try {
+    const r = await fetch(appBase() + "index.html?check=" + Date.now(), { cache: "no-store" });
+    if (!r.ok) return;
+    const m = (await r.text()).match(/const APP_VERSION = "([^"]+)"/);
+    latest = m && m[1];
+  } catch (e) { return; }
+  if (!latest || latest === APP_VERSION) return;
+  let tried = "";
+  try { tried = sessionStorage.getItem("storemap.upd") || ""; sessionStorage.setItem("storemap.upd", latest); } catch (e) {}
+  const busy = publishing || G.active || $("sheet").classList.contains("open") || $("menu").classList.contains("open") ||
+               $("login").style.display === "flex";
+  if (tried === latest || busy) return showUpdate(latest);   // 이미 한 번 다시 열었거나 뭔가 하는 중이면 버튼으로 안내만
+  reloadTo(latest);
+}
+function reloadTo(v) { location.replace(appBase() + "?v=" + encodeURIComponent(v)); }   // 주소가 달라서 저장된 옛 페이지를 안 씀
+function showUpdate(v) {
+  const el = $("upd");
+  el.innerHTML = "새 버전이 있어요 <button>업데이트</button>";
+  el.style.display = "block";
+  el.querySelector("button").onclick = () => reloadTo(v);
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkUpdate(false); });
+checkUpdate(true);
+loadNaver();
+</script>
+</body>
+</html>
