@@ -67,6 +67,14 @@
   .badge.kbadge { background: #FEE500 !important; color: #191919 !important; }
   .ktag { display: inline-block; font-size: 10px; font-weight: 700; color: #191919; background: #FEE500; border-radius: 4px; padding: 0 4px; margin-left: 5px; vertical-align: 1px; }
   .chip i.sq { border-radius: 2px; box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
+  /* 검색·방문 기록에서 고른 매장: 핀 뒤로 빛이 퍼지며 반짝임 (10초 동안 · 매장 창을 닫으면 바로 멈춤), 다른 핀보다 위에 */
+  .mk.focus > .pin, .mk.focus > .dot { position: relative; }     /* 핀이 반짝임 위에 그려지게 */
+  body.blink .mk.focus::before { content: ""; position: absolute; left: 50%; top: 50%; width: 50px; height: 50px; margin: -25px 0 0 -25px; border-radius: 50%;
+    background: rgba(255, 45, 85, .45); animation: fpulse 1.4s ease-out infinite; pointer-events: none; }
+  @keyframes fpulse { 0% { transform: scale(.4); opacity: 1; } 100% { transform: scale(1.3); opacity: 0; } }
+  #undo { position: absolute; left: 50%; transform: translateX(-50%); top: 160px; z-index: 27; display: none;
+    background: rgba(0,0,0,.85); color: #fff; font-size: 14px; padding: 8px 8px 8px 16px; border-radius: 999px; box-shadow: 0 4px 14px rgba(0,0,0,.25); white-space: nowrap; }
+  #undo button { margin-left: 10px; border: 0; border-radius: 999px; padding: 5px 12px; background: #ffd60a; color: #111; font: inherit; font-weight: 700; }
   .spot { margin-top: 6px; }
   .spotRow { display: flex; align-items: center; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--line); cursor: pointer; }
   .spotRow > i { flex: 0 0 auto; width: 12px; height: 12px; border-radius: 50%; }
@@ -87,6 +95,7 @@
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
   .btn.wide { grid-column: 1 / -1; }
   .btn.done { background: #333; border-color: #333; color: #fff; }
+  .btn.ding { background: #1677ff; border-color: #1677ff; color: #fff; font-weight: 600; }
   .btn.report { font-size: 13px; padding: 8px; color: var(--muted); background: var(--chip); border-color: var(--chip); }
   #results { position: absolute; z-index: 15; left: 10px; right: 10px; background: #fff; border: 1px solid var(--line); border-radius: 12px; max-height: 50%; overflow-y: auto; display: none; box-shadow: 0 6px 20px rgba(0,0,0,.15); }
   #results div { padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 14px; }
@@ -126,10 +135,12 @@
 <button class="fab" id="locBtn" title="내 위치"><span id="locIcon">◎</span></button>
 <div id="toast"></div>
 <div id="upd"></div>
+<div id="undo"></div>
 
 <div class="sheet" id="sheet"><button class="close" onclick="closeSheet()">×</button><div id="sheetBody"></div></div>
 <div class="sheet" id="menu"><button class="close" onclick="closeMenu()">×</button>
   <h2>메뉴</h2>
+  <button class="btn" id="myVisitsBtn" onclick="openMyVisits()">내 방문 기록</button>
   <div id="menuLocal">
     <p class="sub">방문 기록은 이 휴대폰 브라우저에만 저장돼요. 브라우저 데이터를 지우기 전에 백업해 두세요.</p>
     <button class="btn" onclick="exportVisited()">방문 기록 백업 (파일 저장)</button>
@@ -167,6 +178,8 @@
 const CFG = window.STOREMAP_CONFIG || {};
 const NAVER_MAPS_CLIENT_ID = CFG.naverClientId || "ubcgbdyb3h";   // 네이버 클라우드 Maps Client ID
 const TEAM_SYNC_URL = (CFG.teamSyncUrl || "").trim();             // 팀 방문 기록 공유용 구글 Apps Script 웹 앱 주소
+// S2 PMS 매장 방문 등록 화면 (DingTalk 안에서 열림) — 뒤에 Store ID 를 붙임
+const PMS_VISIT_URL = CFG.pmsVisitUrl || "https://render.alipay.com/p/yuyan/180020010001257127/actionListPage.html?storeId=";
 
 const STATUS = {
   ok:   { label: "네이버 확인됨",   color: "var(--ok)" },
@@ -184,6 +197,8 @@ const IS_LOCAL = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
 
 let stores = [], byId = new Map(), map, markers = new Map(), visited = {}, current = null, meMarker = null;
 let spotList = null, sheetFromList = false, lastMode = "dot";   // 한 자리에 여러 매장일 때 보여 준 목록
+let focusId = null, sheetFromHist = false;   // 검색·내 방문 기록에서 고른 매장 (그 매장 창이 열려 있는 동안 핀 강조) / 내 방문 기록에서 연 매장 창
+const BLINK_MS = 10000;                      // 고른 매장 핀이 반짝이는 시간 (그 뒤엔 반짝임만 멈추고 핀은 맨 위에 그대로)
 let session = {}, dataSource = "", teamState = {}, pending = [], flushing = false, lastSync = 0, syncErr = "";
 let prefs = { area: "", status: { ok: true, weak: true, none: true, unk: true }, showVisited: false, src: { p: true, k: true } };
 const srcOf = (s) => (s.src === "k" ? "k" : "p");        // p = S2 PMS, k = 카카오페이 SQR
@@ -415,7 +430,7 @@ function applyTeam(visits) {
   lastSync = Date.now();
   syncErr = "";
   recompute();
-  if (map) { buildChips(); render(); if (current) openSheet(current); }
+  if (map) { buildChips(); render(); if (current) openSheet(current, sheetFromList, sheetFromHist); }   // 목록·방문 기록에서 연 창이면 돌아가기 버튼 유지
 }
 
 async function pull() {
@@ -509,9 +524,10 @@ async function publishTeamUpdate() {
     // 1) 잠긴 데이터 파일
     progress("팀용 데이터 파일 만드는 중…");
     const text = await (await fetch("stores.json", { cache: "no-cache" })).text();
-    // 팀 지도에는 원본 Store ID·검색용 주소가 필요 없어서 빼고 잠가요 (파일이 작아져서 휴대폰에서 빨리 열려요)
+    // 팀 지도에는 검색용 주소·카카오페이 QR 번호는 필요 없어서 빼고 잠가요 (파일이 작아져서 휴대폰에서 빨리 열려요)
+    // S2 PMS 의 Store ID 는 'DingTalk에서 방문 등록' 버튼에 써서 남겨요
     const uniq = new Map(JSON.parse(text).map((s) => [s.i, s]));   // 같은 매장이 두 번 있으면 하나만 (지도와 똑같이)
-    const slim = JSON.stringify([...uniq.values()].map(({ pid, ad, ...rest }) => rest));
+    const slim = JSON.stringify([...uniq.values()].map(({ pid, ad, ...rest }) => (pid && rest.src !== "k" ? Object.assign(rest, { pid }) : rest)));
     const bytes = await encryptStores(slim, code);
     const check = await decryptStores(bytes.buffer, code);
     if (check.length !== stores.length) throw new Error("파일 확인 실패");
@@ -567,6 +583,7 @@ function openMenu() {
   $("menuLocal").style.display = TEAM_SYNC_URL ? "none" : "";
   $("menuTeam").style.display = TEAM_SYNC_URL ? "" : "none";
   $("menuAdmin").style.display = dataSource === "stores.json" ? "" : "none";   // 잠그기 전(stores.json)일 때만
+  $("myVisitsBtn").textContent = `내 방문 기록 (${myVisits().length.toLocaleString()}곳)`;
   if (TEAM_SYNC_URL) {
     $("teamInfo").innerHTML = `팀 공유 중 — <b>${esc(session.name || "")}</b> 님으로 기록돼요. 방문 기록은 팀 전체 지도와 구글 시트에 저장돼요.` +
       `<br>${pending.length ? `전송 대기 ${pending.length}건 (인터넷 연결되면 자동 전송)` : lastSync ? "마지막 동기화 " + new Date(lastSync).toLocaleTimeString("ko-KR") : ""}`;
@@ -645,6 +662,7 @@ function positionOverlays() {
   const h = $("bar").offsetHeight;
   $("results").style.top = (h + 6) + "px";
   $("hint").style.top = (h + 10) + "px";
+  $("undo").style.top = (h + 48) + "px";      // 위쪽에 띄워서 아래 매장 창·버튼을 가리지 않게
 }
 
 /* ---------- 필터 UI ---------- */
@@ -767,8 +785,10 @@ function render() {
   const k0 = lowerBound(lngs, (V.C[0] - ext) / V.kx), k1 = lowerBound(lngs, (V.C[0] + ext) / V.kx + 1e-12);
   const shown = [];
   let otherArea = 0, hiddenStatus = 0;
+  let focusS = null;
   for (let k = k0; k < k1; k++) {
     const s = byLng[k];
+    if (s.i === focusId) { if (inView(s)) focusS = s; continue; }   // 고른 매장은 방문했거나 숨긴 상태여도 보여줌
     if ((visited[s.i] && !prefs.showVisited) || !inView(s)) continue;
     if (prefs.area && s.g !== prefs.area) { if (prefs.status[st(s)] && prefs.src[srcOf(s)]) otherArea++; continue; }
     if (!prefs.status[st(s)] || !prefs.src[srcOf(s)]) { hiddenStatus++; continue; }
@@ -777,6 +797,7 @@ function render() {
   // 같은 자리(좌표)의 매장은 핀 하나로 묶음 → 누르면 목록에서 고름
   const groups = new Map();
   let tooMany = false;
+  if (focusS) { shown.unshift(focusS); }      // 맨 먼저 묶어서 핀이 너무 많아도 이 핀은 그림
   for (const s of shown) {
     const p = s._p, k = spotKey(p);
     let g = groups.get(k);
@@ -802,16 +823,18 @@ function render() {
     });
   else setHint("");
 
-  const want = new Set(tooMany ? [] : groups.keys());
+  const fKey = focusS ? spotKey(focusS._p) : null;
+  const draw = tooMany ? (fKey && groups.has(fKey) ? [groups.get(fKey)] : []) : [...groups.values()];
+  const want = new Set(draw.map((g) => g.k));
   if (current && posOf(current)) want.add(spotKey(posOf(current)));
   for (const [id, m] of markers) if (!want.has(id)) { m.setMap(null); markers.delete(id); }
-  for (const g of tooMany ? [] : groups.values()) {
+  for (const g of draw) {
     g.list.sort((a, b) => (visited[a.i] ? 1 : 0) - (visited[b.i] ? 1 : 0) || nameOf(a).localeCompare(nameOf(b), "ko"));
     const { html, sz } = markerHtml(g.list, mode);
     const old = markers.get(g.k);
     if (old && old.__html === html) { old.__g = g; continue; }
     if (old) old.setMap(null);
-    const m = new naver.maps.Marker({ position: new naver.maps.LatLng(g.p[0], g.p[1]), map, zIndex: g.list.length > 1 ? 2 : 1,
+    const m = new naver.maps.Marker({ position: new naver.maps.LatLng(g.p[0], g.p[1]), map, zIndex: g.k === fKey ? 1000 : g.list.length > 1 ? 2 : 1,
       icon: { content: html, size: new naver.maps.Size(sz, sz), anchor: new naver.maps.Point(sz / 2, sz / 2) } });
     m.__html = html;
     m.__g = g;
@@ -838,15 +861,19 @@ function groupColor(list) {
 }
 
 function markerHtml(list, mode) {
+  const f = focusId && list.some((s) => s.i === focusId);
+  if (f) mode = "label";                   // 고른 매장은 작은 점 대신 이름이 붙은 핀으로
+  const fc = f ? " focus" : "";
   const n = list.length, v = list.every((s) => visited[s.i]) ? " visited" : "", bg = groupColor(list);
   const grp = (n > 1 ? " grp" : "") + (list.every((s) => s.src === "k") ? " kk" : "");   // 카카오페이만 있는 자리는 네모
   if (mode === "dot") {
     const sz = n > 1 ? 13 : 10;
-    return { sz, html: `<div class="mk" style="width:${sz}px;height:${sz}px"><div class="dot${v}${grp}" style="background:${bg}"></div></div>` };
+    return { sz, html: `<div class="mk${fc}" style="width:${sz}px;height:${sz}px"><div class="dot${v}${grp}" style="background:${bg}"></div></div>` };
   }
   const sz = n > 1 ? 22 : 18;
-  const label = mode === "label" ? `<span class="lbl" style="left:${sz + 4}px;top:${(sz - 18) / 2}px">${esc(nameOf(list[0]))}${n > 1 ? ` 외 ${n - 1}곳` : ""}</span>` : "";
-  return { sz, html: `<div class="mk up" style="width:${sz}px;height:${sz}px"><div class="pin${v}${grp}" style="background:${bg}">${n > 1 ? n : ""}</div>${label}</div>` };
+  const first = f ? list.find((s) => s.i === focusId) : list[0];
+  const label = mode === "label" ? `<span class="lbl" style="left:${sz + 4}px;top:${(sz - 18) / 2}px${f ? ";font-weight:700" : ""}">${esc(nameOf(first))}${n > 1 ? ` 외 ${n - 1}곳` : ""}</span>` : "";
+  return { sz, html: `<div class="mk up${fc}" style="width:${sz}px;height:${sz}px"><div class="pin${v}${grp}" style="background:${bg}">${n > 1 ? n : ""}</div>${label}</div>` };
 }
 
 /* ---------- 한 자리에 매장이 여러 개일 때: 목록에서 고르기 ---------- */
@@ -875,6 +902,7 @@ function nearbyGroups(g) {
 function openSpot(entries, near) {
   if (entries) spotList = { entries, near };
   if (!spotList) return;
+  clearFocus();
   current = null;
   sheetFromList = false;
   closeMenu();
@@ -895,21 +923,28 @@ function openSpot(entries, near) {
 }
 
 /* ---------- 상세 시트 ---------- */
-function openSheet(s, fromList) {
+function openSheet(s, fromList, fromHist) {
   if (!s) return;
+  if (focusId && s.i !== focusId) clearFocus();        // 다른 매장을 열면 앞서 고른 매장 강조는 끝
   current = s;
   sheetFromList = !!(fromList && spotList);
+  sheetFromHist = !!fromHist && !sheetFromList;
   if (!sheetFromList) spotList = null;
   closeMenu();
   const name = nameOf(s), p = posOf(s);
   const verified = s.s === "ok" && s.k;
-  const q = name.trim();      // 이름+주소를 같이 넣으면 네이버에서 안 나오는 경우가 많아서 이름만 (주소는 '주소로 검색' 버튼)
+  // 이름+주소를 같이 넣으면 네이버에서 안 나오는 경우가 많아서 이름만 (주소는 '주소로 검색' 버튼).
+  // 확인 안 된 매장은 '주식회사'·괄호·'○○점' 뒤 설명을 빼고 검색 (투썸플레이스 주식회사 → 투썸플레이스)
+  const q = (verified ? name : coreName(name)).trim();
   const addrQ = (s.qa || s.q || s.a || "").trim();     // 영어 주소는 한글로 바꾼 주소(qa)로 검색
   const app = encodeURIComponent(location.hostname || "storemap");
   const webUrl = "https://map.naver.com/p/search/" + encodeURIComponent(q);
   const appUrl = `nmap://search?query=${encodeURIComponent(q)}&appname=${app}`;
   const addrUrl = `nmap://search?query=${encodeURIComponent(addrQ)}&appname=${app}`;
   const routeUrl = p ? `nmap://route/walk?dlat=${p[0]}&dlng=${p[1]}&dname=${encodeURIComponent(name)}&appname=${app}` : "";
+  // DingTalk 앱 안에서 이 매장의 방문 등록 화면을 바로 열기 (S2 PMS 매장만, Store ID 가 있을 때)
+  const dingUrl = s.src !== "k" && s.pid
+    ? "dingtalk://dingtalkclient/page/link?url=" + encodeURIComponent(PMS_VISIT_URL + s.pid) + "&pc_slide=false" : "";
   const isV = !!visited[s.i];
   const info = [];
   info.push(`${s.src === "k" ? "카카오페이" : "PMS"} 이름: ${esc(s.n)}`);   // 위 제목이 리스트 이름 그대로여도 항상 보여줌
@@ -926,6 +961,7 @@ function openSheet(s, fromList) {
   if (isV) info.push(`<b>방문 완료</b>: ${new Date(visited[s.i].t).toLocaleString("ko-KR")}${visited[s.i].u ? " · " + esc(visited[s.i].u) : ""}`);
   $("sheetBody").innerHTML = `
     ${sheetFromList ? `<button class="back" onclick="openSpot()">← 이 자리 매장 목록 (${spotList.entries.length}곳)</button>` : ""}
+    ${sheetFromHist ? `<button class="back" onclick="openMyVisits()">← 내 방문 기록</button>` : ""}
     <h2>${esc(name)}</h2>
     <span class="badge" style="background:${STATUS[st(s)].color}">${STATUS[st(s)].label}</span>
     ${s.src === "k" ? `<span class="badge kbadge">카카오페이 SQR</span>` : ""}
@@ -937,18 +973,95 @@ function openSheet(s, fromList) {
       <a class="btn" href="${addrUrl}">주소로 검색</a>
       ${routeUrl ? `<a class="btn" href="${routeUrl}">도보 길찾기</a>` : `<span class="btn" style="opacity:.4">도보 길찾기</span>`}
       <a class="btn" href="${webUrl}" target="_blank" rel="noopener">웹에서 검색</a>
+      ${dingUrl ? `<a class="btn wide ding" href="${dingUrl}">DingTalk에서 방문 등록</a>` : ""}
       <button class="btn wide ${isV ? "" : "done"}" onclick="toggleVisited('${s.i}')">${isV ? "방문 취소 (핀 다시 보이기)" : "✓ 방문 완료 (핀 숨기기)"}</button>
       ${TEAM_SYNC_URL ? `<button class="btn wide report" onclick="reportError('${s.i}')">이름·위치가 틀렸어요 (오류 제보)</button>` : ""}
     </div>`;
   $("sheet").scrollTop = 0;
   $("sheet").classList.add("open");
 }
-function closeSheet() { $("sheet").classList.remove("open"); current = null; spotList = null; sheetFromList = false; }
+function closeSheet() { $("sheet").classList.remove("open"); current = null; spotList = null; sheetFromList = false; sheetFromHist = false; clearFocus(); }
+
+// '주식회사 우동명가(본점) 강남점 2층' → '우동명가 강남점' (네이버 검색용: 회사 표시·괄호·'○○점' 뒤 설명 빼기)
+function coreName(nm) {
+  const t = String(nm || "").replace(/주식회사|유한회사|\(\s*주\s*\)|㈜|\(\s*유\s*\)/g, " ").replace(/\([^)]*\)|\[[^\]]*\]/g, " ");
+  const toks = t.split(/\s+/).filter(Boolean);
+  const i = toks.findIndex((w, k) => k < toks.length - 1 && w.length >= 2 && w.endsWith("점"));
+  return (i >= 0 ? toks.slice(0, i + 1) : toks).join(" ") || String(nm || "").trim();
+}
+
+// 고른 매장으로 이동 + 핀 강조 + 매장 창 (핀이 아래 매장 창에 가리지 않게 화면 위쪽에)
+function focusOn(s, fromHist) {
+  if (!s) return;
+  focusId = s.i;
+  startBlink();
+  const p = posOf(s);
+  if (p) {
+    if (locMode !== "off") setLocMode("off");
+    const zoom = 18, H = wrapRect().height, mpp = 156543.03392 * Math.cos(rad(p[0])) / Math.pow(2, zoom);
+    const [ex, sy] = rotV(0, H * 0.2, -rot);          // 화면 아래쪽 20% 만큼 지도 중심을 옮김 (돌아간 지도도 고려)
+    map.setCenter(new naver.maps.LatLng(p[0] - (sy * mpp) / 111320, p[1] + (ex * mpp) / (111320 * Math.cos(rad(p[0])))));
+    map.setZoom(zoom);
+  }
+  openSheet(s, false, fromHist);
+  render();
+}
+// 반짝임은 BLINK_MS 뒤 저절로 멈춤. 매장 창을 닫거나(지도 빈 곳 누르기 포함) 다른 매장·목록을 열면 강조가 바로 끝남
+function startBlink() {
+  clearTimeout(startBlink.t);
+  document.body.classList.add("blink");
+  startBlink.t = setTimeout(() => document.body.classList.remove("blink"), BLINK_MS);
+}
+function clearFocus() {
+  if (!focusId) return;
+  focusId = null;
+  clearTimeout(startBlink.t);
+  document.body.classList.remove("blink");
+  render();
+}
+
+/* ---------- 내 방문 기록 (실수로 누른 방문 완료를 찾아서 취소) ---------- */
+function myVisits() {
+  const me = (session.name || "").trim();
+  return Object.entries(visited)
+    .filter(([id, v]) => byId.has(id) && (!TEAM_SYNC_URL || (v.u || "").trim() === me))
+    .map(([id, v]) => ({ s: byId.get(id), t: v.t || 0 }))
+    .sort((a, b) => b.t - a.t);
+}
+function openMyVisits() {
+  closeMenu();
+  clearFocus();
+  const list = myVisits();
+  current = null; spotList = null; sheetFromList = false; sheetFromHist = false;
+  const fmt = (t) => t ? new Date(t).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+  $("sheetBody").innerHTML = `
+    <h2>내 방문 기록 ${list.length.toLocaleString()}곳</h2>
+    <div class="sub">${TEAM_SYNC_URL ? `<b>${esc(session.name || "")}</b> 님 이름으로` : "이 휴대폰에서"} 방문 완료한 매장이에요 (최근 순).
+      누르면 그 매장으로 가요. 매장 창에서 <b>방문 취소</b>를 누르면 핀이 다시 보여요.</div>
+    <div class="spot">${list.length ? list.slice(0, 500).map(({ s, t }) => `
+      <div class="spotRow" data-i="${esc(s.i)}"><i style="background:${STATUS[st(s)].color}"></i>
+        <div><b>${esc(nameOf(s))}</b>${s.src === "k" ? '<span class="ktag">카카오</span>' : ""}
+        <small>${fmt(t)} · ${esc(s.g)}${s.q ? " · " + esc(s.q) : ""}</small></div></div>`).join("")
+      : `<div class="sub" style="margin-top:12px">아직 방문 완료한 매장이 없어요.</div>`}</div>`;
+  $("sheetBody").querySelectorAll(".spotRow").forEach((r) => (r.onclick = () => focusOn(byId.get(r.dataset.i), true)));
+  $("sheet").scrollTop = 0;
+  $("sheet").classList.add("open");
+}
+
+// 방문 완료 직후 몇 초 동안 '되돌리기'
+function showUndo(id) {
+  const el = $("undo");
+  el.innerHTML = `방문 완료로 표시했어요 <button>되돌리기</button>`;
+  el.style.display = "block";
+  el.querySelector("button").onclick = () => { el.style.display = "none"; if (visited[id]) toggleVisited(id); };
+  clearTimeout(showUndo.timer);
+  showUndo.timer = setTimeout(() => { el.style.display = "none"; }, 8000);
+}
 function closeMenu() { $("menu").classList.remove("open"); }
 
 function toggleVisited(id) {
   const s = byId.get(id);
-  const backToList = sheetFromList && spotList;
+  const backToList = sheetFromList && spotList, backToHist = sheetFromHist;
   const wasVisited = !!visited[id];
   if (TEAM_SYNC_URL) {
     pending.push({ id, action: wasVisited ? "unvisit" : "visit", t: Date.now(), user: session.name || "", name: nameOf(s), area: s.g });
@@ -961,7 +1074,8 @@ function toggleVisited(id) {
   }
   if (backToList && visited[id]) openSpot();            // 같은 자리 매장 목록으로 돌아가서 다음 매장 고르기
   else if (visited[id] && !prefs.showVisited) closeSheet();
-  else openSheet(s, backToList);
+  else openSheet(s, backToList, backToHist);
+  if (visited[id]) showUndo(id); else $("undo").style.display = "none";
   render();
 }
 
@@ -1000,8 +1114,7 @@ function onSearch() {
   box.querySelectorAll("[data-i]").forEach((d) => d.onclick = () => {
     const s = byId.get(d.dataset.i);
     box.style.display = "none"; $("q").blur();
-    goTo(s, 18);
-    openSheet(s);
+    focusOn(s);
   });
 }
 
@@ -1480,7 +1593,7 @@ window.addEventListener("resize", () => {
 /* ---------- 새 버전 자동 적용 ----------
    휴대폰은 페이지를 잠깐(GitHub는 최대 10분) 저장해 두고 그걸 보여 줘서, index.html 을 바꿔도 새로고침만으로는 안 바뀔 때가 있어요.
    열 때·다시 볼 때마다 서버의 index.html 버전을 확인해서, 다르면 새 버전으로 다시 열어요. (index.html 을 고칠 때마다 아래 버전도 바꿈) */
-const APP_VERSION = "2026-10-29.1";
+const APP_VERSION = "2026-10-29.4";
 let updLast = 0, publishing = false;
 const appBase = () => location.pathname.replace(/[^/]*$/, "");
 async function checkUpdate(atStart) {
