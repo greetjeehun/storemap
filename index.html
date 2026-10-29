@@ -341,7 +341,7 @@ function showLogin(sess, needName, needCode, err) {
     $("nameRow").style.display = needName ? "" : "none";
     $("codeRow").style.display = needCode ? "" : "none";
     $("loginDesc").textContent = needName
-      ? "처음 한 번만 입력하면 돼요. 방문 완료를 누르면 팀 전체 지도와 구글 시트에 이름이 남아요."
+      ? "처음 한 번만 입력하면 돼요. 방문 완료를 누르면 팀 전체 지도에 이름이 남아요."
       : "팀 코드를 입력하면 매장 지도가 열려요. (처음 한 번만)";
     $("loginName").value = sess.name || "";
     $("loginCode").value = sess.code || "";
@@ -585,7 +585,7 @@ function openMenu() {
   $("menuAdmin").style.display = dataSource === "stores.json" ? "" : "none";   // 잠그기 전(stores.json)일 때만
   $("myVisitsBtn").textContent = `내 방문 기록 (${myVisits().length.toLocaleString()}곳)`;
   if (TEAM_SYNC_URL) {
-    $("teamInfo").innerHTML = `팀 공유 중 — <b>${esc(session.name || "")}</b> 님으로 기록돼요. 방문 기록은 팀 전체 지도와 구글 시트에 저장돼요.` +
+    $("teamInfo").innerHTML = `팀 공유 중 — <b>${esc(session.name || "")}</b> 님으로 기록돼요.` +
       `<br>${pending.length ? `전송 대기 ${pending.length}건 (인터넷 연결되면 자동 전송)` : lastSync ? "마지막 동기화 " + new Date(lastSync).toLocaleTimeString("ko-KR") : ""}`;
   }
   $("diag").textContent = diagText();
@@ -1593,7 +1593,7 @@ window.addEventListener("resize", () => {
 /* ---------- 새 버전 자동 적용 ----------
    휴대폰은 페이지를 잠깐(GitHub는 최대 10분) 저장해 두고 그걸 보여 줘서, index.html 을 바꿔도 새로고침만으로는 안 바뀔 때가 있어요.
    열 때·다시 볼 때마다 서버의 index.html 버전을 확인해서, 다르면 새 버전으로 다시 열어요. (index.html 을 고칠 때마다 아래 버전도 바꿈) */
-const APP_VERSION = "2026-10-29.4";
+const APP_VERSION = "2026-10-29.5";
 let updLast = 0, publishing = false;
 const appBase = () => location.pathname.replace(/[^/]*$/, "");
 async function checkUpdate(atStart) {
