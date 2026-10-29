@@ -96,6 +96,7 @@
   .btn.wide { grid-column: 1 / -1; }
   .btn.done { background: #333; border-color: #333; color: #fff; }
   .btn.ding { background: #1677ff; border-color: #1677ff; color: #fff; font-weight: 600; }
+  .dingHint { grid-column: 1 / -1; margin-top: -4px; font-size: 12px; color: var(--muted); text-align: center; }
   .btn.report { font-size: 13px; padding: 8px; color: var(--muted); background: var(--chip); border-color: var(--chip); }
   #results { position: absolute; z-index: 15; left: 10px; right: 10px; background: #fff; border: 1px solid var(--line); border-radius: 12px; max-height: 50%; overflow-y: auto; display: none; box-shadow: 0 6px 20px rgba(0,0,0,.15); }
   #results div { padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 14px; }
@@ -179,7 +180,10 @@ const CFG = window.STOREMAP_CONFIG || {};
 const NAVER_MAPS_CLIENT_ID = CFG.naverClientId || "ubcgbdyb3h";   // 네이버 클라우드 Maps Client ID
 const TEAM_SYNC_URL = (CFG.teamSyncUrl || "").trim();             // 팀 방문 기록 공유용 구글 Apps Script 웹 앱 주소
 // S2 PMS 매장 방문 등록 화면 (DingTalk 안에서 열림) — 뒤에 Store ID 를 붙임
-const PMS_VISIT_URL = CFG.pmsVisitUrl || "https://render.alipay.com/p/yuyan/180020010001257127/actionListPage.html?storeId=";
+// DingTalk A&I MAGA 첫 화면(가맹점 방문). 매장 작업 목록으로 바로 들어가면 사진 첨부가 안 되고 등록 출처도 달라져서,
+// 첫 화면부터 평소처럼 들어가게 함 (매장명은 미리 복사 → 매장 목록 검색창에 붙여넣기)
+const PMS_HOME_URL = CFG.pmsHomeUrl || "https://render.alipay.com/p/yuyan/180020010001257127/homePage.html";
+const DING_HOME = "dingtalk://dingtalkclient/page/link?url=" + encodeURIComponent(PMS_HOME_URL) + "&pc_slide=false";
 
 const STATUS = {
   ok:   { label: "네이버 확인됨",   color: "var(--ok)" },
@@ -943,8 +947,7 @@ function openSheet(s, fromList, fromHist) {
   const addrUrl = `nmap://search?query=${encodeURIComponent(addrQ)}&appname=${app}`;
   const routeUrl = p ? `nmap://route/walk?dlat=${p[0]}&dlng=${p[1]}&dname=${encodeURIComponent(name)}&appname=${app}` : "";
   // DingTalk 앱 안에서 이 매장의 방문 등록 화면을 바로 열기 (S2 PMS 매장만, Store ID 가 있을 때)
-  const dingUrl = s.src !== "k" && s.pid
-    ? "dingtalk://dingtalkclient/page/link?url=" + encodeURIComponent(PMS_VISIT_URL + s.pid) + "&pc_slide=false" : "";
+  const ding = s.src !== "k";     // S2 PMS 매장만 (카카오페이 매장은 MAGA 에 없음)
   const isV = !!visited[s.i];
   const info = [];
   info.push(`${s.src === "k" ? "카카오페이" : "PMS"} 이름: ${esc(s.n)}`);   // 위 제목이 리스트 이름 그대로여도 항상 보여줌
@@ -973,7 +976,8 @@ function openSheet(s, fromList, fromHist) {
       <a class="btn" href="${addrUrl}">주소로 검색</a>
       ${routeUrl ? `<a class="btn" href="${routeUrl}">도보 길찾기</a>` : `<span class="btn" style="opacity:.4">도보 길찾기</span>`}
       <a class="btn" href="${webUrl}" target="_blank" rel="noopener">웹에서 검색</a>
-      ${dingUrl ? `<a class="btn wide ding" href="${dingUrl}">DingTalk에서 방문 등록</a>` : ""}
+      ${ding ? `<a class="btn wide ding" href="${DING_HOME}" onclick="copyForDing('${s.i}')">DingTalk 열기 · 매장명 복사</a>
+      <div class="dingHint">가맹점 방문 → 매장 목록 검색창에 붙여넣기</div>` : ""}
       <button class="btn wide ${isV ? "" : "done"}" onclick="toggleVisited('${s.i}')">${isV ? "방문 취소 (핀 다시 보이기)" : "✓ 방문 완료 (핀 숨기기)"}</button>
       ${TEAM_SYNC_URL ? `<button class="btn wide report" onclick="reportError('${s.i}')">이름·위치가 틀렸어요 (오류 제보)</button>` : ""}
     </div>`;
@@ -1128,6 +1132,31 @@ const ME_HTML = '<div style="position:relative;width:60px;height:60px;pointer-ev
   '<svg id="meCone" width="60" height="60" viewBox="0 0 60 60" style="position:absolute;left:0;top:0;display:none;transform-origin:50% 50%">' +
   '<path d="M30 30 L17 3 A30 30 0 0 1 43 3 Z" fill="rgba(26,115,232,.32)"/></svg>' +
   '<div style="position:absolute;left:21px;top:21px;width:18px;height:18px;border-radius:50%;background:#1a73e8;border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)"></div></div>';
+
+// 클립보드 복사 (딩톡으로 넘어가기 전에 끝나도록 바로 복사 + 되는 브라우저는 clipboard API 도)
+function copyText(t) {
+  let ok = false;
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = t;
+    ta.setAttribute("readonly", "");
+    ta.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;";
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, t.length);
+    ok = document.execCommand("copy");
+    ta.remove();
+  } catch (e) {}
+  try { if (navigator.clipboard) navigator.clipboard.writeText(t).catch(() => {}); } catch (e) {}
+  return ok;
+}
+// DingTalk 버튼: 매장명(PMS 이름 그대로)을 복사하고 A&I MAGA 첫 화면으로 (링크 이동은 버튼 기본 동작)
+function copyForDing(id) {
+  const s = byId.get(id);
+  if (!s) return;
+  copyText(s.n);
+  toast(`'${s.n}' 복사했어요 → 가맹점 방문 → 검색창에 붙여넣기`);
+}
 
 function toast(t) {
   const el = $("toast");
@@ -1593,7 +1622,7 @@ window.addEventListener("resize", () => {
 /* ---------- 새 버전 자동 적용 ----------
    휴대폰은 페이지를 잠깐(GitHub는 최대 10분) 저장해 두고 그걸 보여 줘서, index.html 을 바꿔도 새로고침만으로는 안 바뀔 때가 있어요.
    열 때·다시 볼 때마다 서버의 index.html 버전을 확인해서, 다르면 새 버전으로 다시 열어요. (index.html 을 고칠 때마다 아래 버전도 바꿈) */
-const APP_VERSION = "2026-10-29.5";
+const APP_VERSION = "2026-10-30.1";
 let updLast = 0, publishing = false;
 const appBase = () => location.pathname.replace(/[^/]*$/, "");
 async function checkUpdate(atStart) {
