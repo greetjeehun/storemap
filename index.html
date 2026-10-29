@@ -180,10 +180,10 @@ const CFG = window.STOREMAP_CONFIG || {};
 const NAVER_MAPS_CLIENT_ID = CFG.naverClientId || "ubcgbdyb3h";   // 네이버 클라우드 Maps Client ID
 const TEAM_SYNC_URL = (CFG.teamSyncUrl || "").trim();             // 팀 방문 기록 공유용 구글 Apps Script 웹 앱 주소
 // S2 PMS 매장 방문 등록 화면 (DingTalk 안에서 열림) — 뒤에 Store ID 를 붙임
-// DingTalk A&I MAGA 첫 화면(가맹점 방문). 매장 작업 목록으로 바로 들어가면 사진 첨부가 안 되고 등록 출처도 달라져서,
-// 첫 화면부터 평소처럼 들어가게 함 (매장명은 미리 복사 → 매장 목록 검색창에 붙여넣기)
-const PMS_HOME_URL = CFG.pmsHomeUrl || "https://render.alipay.com/p/yuyan/180020010001257127/homePage.html";
-const DING_HOME = "dingtalk://dingtalkclient/page/link?url=" + encodeURIComponent(PMS_HOME_URL) + "&pc_slide=false";
+// DingTalk A&I MAGA 매장 목록(가맹점 방문 → 매장 목록 화면). 매장 화면 주소의 storeId 는 MAGA 자체 번호라서
+// PMS Store ID 로는 바로 못 감 → 매장명을 복사해 두고 매장 목록 검색창에 붙여넣기
+const PMS_LIST_URL = CFG.pmsListUrl || "https://render.alipay.com/p/yuyan/180020010001257127/inspectionStoreListPage.html";
+const DING_LIST = "dingtalk://dingtalkclient/page/link?url=" + encodeURIComponent(PMS_LIST_URL) + "&pc_slide=false";
 
 const STATUS = {
   ok:   { label: "네이버 확인됨",   color: "var(--ok)" },
@@ -976,8 +976,8 @@ function openSheet(s, fromList, fromHist) {
       <a class="btn" href="${addrUrl}">주소로 검색</a>
       ${routeUrl ? `<a class="btn" href="${routeUrl}">도보 길찾기</a>` : `<span class="btn" style="opacity:.4">도보 길찾기</span>`}
       <a class="btn" href="${webUrl}" target="_blank" rel="noopener">웹에서 검색</a>
-      ${ding ? `<a class="btn wide ding" href="${DING_HOME}" onclick="copyForDing('${s.i}')">DingTalk 열기 · 매장명 복사</a>
-      <div class="dingHint">가맹점 방문 → 매장 목록 검색창에 붙여넣기</div>` : ""}
+      ${ding ? `<a class="btn wide ding" href="${DING_LIST}" onclick="copyForDing('${s.i}')">DingTalk 매장 목록 열기 · 매장명 복사</a>
+      <div class="dingHint">열리면 검색창에 붙여넣기 → 매장을 골라 평소처럼 등록</div>` : ""}
       <button class="btn wide ${isV ? "" : "done"}" onclick="toggleVisited('${s.i}')">${isV ? "방문 취소 (핀 다시 보이기)" : "✓ 방문 완료 (핀 숨기기)"}</button>
       ${TEAM_SYNC_URL ? `<button class="btn wide report" onclick="reportError('${s.i}')">이름·위치가 틀렸어요 (오류 제보)</button>` : ""}
     </div>`;
@@ -1150,12 +1150,12 @@ function copyText(t) {
   try { if (navigator.clipboard) navigator.clipboard.writeText(t).catch(() => {}); } catch (e) {}
   return ok;
 }
-// DingTalk 버튼: 매장명(PMS 이름 그대로)을 복사하고 A&I MAGA 첫 화면으로 (링크 이동은 버튼 기본 동작)
+// DingTalk 버튼: 매장명(PMS 이름 그대로)을 복사하고 A&I MAGA 매장 목록으로 (링크 이동은 버튼 기본 동작)
 function copyForDing(id) {
   const s = byId.get(id);
   if (!s) return;
   copyText(s.n);
-  toast(`'${s.n}' 복사했어요 → 가맹점 방문 → 검색창에 붙여넣기`);
+  toast(`'${s.n}' 복사했어요 → 매장 목록 검색창에 붙여넣기`);
 }
 
 function toast(t) {
@@ -1622,7 +1622,7 @@ window.addEventListener("resize", () => {
 /* ---------- 새 버전 자동 적용 ----------
    휴대폰은 페이지를 잠깐(GitHub는 최대 10분) 저장해 두고 그걸 보여 줘서, index.html 을 바꿔도 새로고침만으로는 안 바뀔 때가 있어요.
    열 때·다시 볼 때마다 서버의 index.html 버전을 확인해서, 다르면 새 버전으로 다시 열어요. (index.html 을 고칠 때마다 아래 버전도 바꿈) */
-const APP_VERSION = "2026-10-30.1";
+const APP_VERSION = "2026-10-30.2";
 let updLast = 0, publishing = false;
 const appBase = () => location.pathname.replace(/[^/]*$/, "");
 async function checkUpdate(atStart) {
