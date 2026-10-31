@@ -97,6 +97,10 @@
   .btn.done { background: #333; border-color: #333; color: #fff; }
   .btn.ding { background: #1677ff; border-color: #1677ff; color: #fff; font-weight: 600; }
   .dingHint { grid-column: 1 / -1; margin-top: -4px; font-size: 12px; color: var(--muted); text-align: center; }
+  .btn.kqr { background: #FEE500; border-color: #FEE500; color: #191919; font-weight: 600; }
+  .btn.mvdone { background: #f2f2f7; border-color: #f2f2f7; color: var(--muted); }
+  .cpy { font: inherit; font-size: 11px; line-height: 1.5; padding: 0 7px; margin-left: 4px; border-radius: 6px; border: 1px solid var(--line);
+    background: #fff; color: var(--muted); vertical-align: 1px; cursor: pointer; }
   .btn.report { font-size: 13px; padding: 8px; color: var(--muted); background: var(--chip); border-color: var(--chip); }
   #results { position: absolute; z-index: 15; left: 10px; right: 10px; background: #fff; border: 1px solid var(--line); border-radius: 12px; max-height: 50%; overflow-y: auto; display: none; box-shadow: 0 6px 20px rgba(0,0,0,.15); }
   #results div { padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 14px; }
@@ -184,6 +188,9 @@ const TEAM_SYNC_URL = (CFG.teamSyncUrl || "").trim();             // 팀 방문 
 // PMS Store ID 로는 바로 못 감 → 매장명을 복사해 두고 매장 목록 검색창에 붙여넣기
 const PMS_LIST_URL = CFG.pmsListUrl || "https://render.alipay.com/p/yuyan/180020010001257127/inspectionStoreListPage.html";
 const DING_LIST = "dingtalk://dingtalkclient/page/link?url=" + encodeURIComponent(PMS_LIST_URL) + "&pc_slide=false";
+// 휴대폰·태블릿: 앱 버튼(네이버 지도 앱·주소로 검색·DingTalk)만 / PC: 웹 검색만 (PC에는 앱이 없어서)
+const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(navigator.userAgent) ||
+                  (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));   // iPad(데스크톱 모드)
 
 const STATUS = {
   ok:   { label: "네이버 확인됨",   color: "var(--ok)" },
@@ -217,6 +224,8 @@ const st = (s) => s.s || "unk";
 // 이름: 네이버 확인된 한글명 > 로마자 이름의 한글 추정 > PMS 이름
 const nameOf = (s) => (s.s === "ok" && s.k) ? s.k : (s.kg || s.n);
 const isGuess = (s) => !(s.s === "ok" && s.k) && !!s.kg;
+// 방문한 매장: 지도에서 방문 완료를 눌렀거나(팀 기록) MAGA 엑셀에 이미 방문(VISIT)으로 온 매장(mv)
+const isDone = (s) => !!(visited[s.i] || s.mv);
 // 핀 위치: 네이버 매장 위치 > 주소 기준 좌표(Geocoding) > PMS 원본 좌표 — 한국 밖의 이상한 좌표(예: 91, 181)는 건너뜀
 const inKorea = (y, x) => typeof y === "number" && typeof x === "number" && y > 33 && y < 39 && x > 124 && x < 132;
 function posInfo(s) {
@@ -528,10 +537,10 @@ async function publishTeamUpdate() {
     // 1) 잠긴 데이터 파일
     progress("팀용 데이터 파일 만드는 중…");
     const text = await (await fetch("stores.json", { cache: "no-cache" })).text();
-    // 팀 지도에는 검색용 주소·카카오페이 QR 번호는 필요 없어서 빼고 잠가요 (파일이 작아져서 휴대폰에서 빨리 열려요)
-    // S2 PMS 의 Store ID 는 'DingTalk에서 방문 등록' 버튼에 써서 남겨요
+    // 팀 지도에는 검색용 주소(ad)는 필요 없어서 빼고 잠가요 (파일이 작아져서 휴대폰에서 빨리 열려요)
+    // 번호(pid)는 남겨요: S2 PMS = Store ID, 카카오페이 = QR 번호 ('카카오페이 QR 열기' 링크)
     const uniq = new Map(JSON.parse(text).map((s) => [s.i, s]));   // 같은 매장이 두 번 있으면 하나만 (지도와 똑같이)
-    const slim = JSON.stringify([...uniq.values()].map(({ pid, ad, ...rest }) => (pid && rest.src !== "k" ? Object.assign(rest, { pid }) : rest)));
+    const slim = JSON.stringify([...uniq.values()].map(({ ad, ...rest }) => rest));
     const bytes = await encryptStores(slim, code);
     const check = await decryptStores(bytes.buffer, code);
     if (check.length !== stores.length) throw new Error("파일 확인 실패");
@@ -734,7 +743,7 @@ function visibleFilter(s) {
   if (prefs.area && s.g !== prefs.area) return false;
   if (!prefs.src[srcOf(s)]) return false;
   if (!prefs.status[st(s)]) return false;
-  if (visited[s.i] && !prefs.showVisited) return false;
+  if (isDone(s) && !prefs.showVisited) return false;
   return posOf(s) !== null;
 }
 
@@ -765,13 +774,13 @@ function indexStores() {
 }
 function lowerBound(arr, v) { let lo = 0, hi = arr.length; while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m] < v) lo = m + 1; else hi = m; } return lo; }
 // 상단 '남은 매장 · 방문' 숫자: 전체 수는 필터가 바뀔 때만 세고, 방문 수는 방문 기록만 훑음
-let statKey = "", statTotal = 0;
+let statKey = "", statTotal = 0, statMv = 0;
 const inScope = (s) => (!prefs.area || s.g === prefs.area) && prefs.src[srcOf(s)];
 function scopeCounts() {
   const key = prefs.area + "|" + prefs.src.p + "|" + prefs.src.k;
-  if (key !== statKey) { statKey = key; statTotal = 0; for (const s of stores) if (inScope(s)) statTotal++; }
-  let done = 0;
-  for (const id in visited) { const s = byId.get(id); if (s && inScope(s)) done++; }
+  if (key !== statKey) { statKey = key; statTotal = 0; statMv = 0; for (const s of stores) if (inScope(s)) { statTotal++; if (s.mv) statMv++; } }
+  let done = statMv;                     // MAGA 엑셀에서 이미 방문
+  for (const id in visited) { const s = byId.get(id); if (s && inScope(s) && !s.mv) done++; }   // + 지도에서 누른 방문 (겹치면 한 번만)
   return { total: statTotal, done };
 }
 
@@ -793,7 +802,7 @@ function render() {
   for (let k = k0; k < k1; k++) {
     const s = byLng[k];
     if (s.i === focusId) { if (inView(s)) focusS = s; continue; }   // 고른 매장은 방문했거나 숨긴 상태여도 보여줌
-    if ((visited[s.i] && !prefs.showVisited) || !inView(s)) continue;
+    if ((isDone(s) && !prefs.showVisited) || !inView(s)) continue;
     if (prefs.area && s.g !== prefs.area) { if (prefs.status[st(s)] && prefs.src[srcOf(s)]) otherArea++; continue; }
     if (!prefs.status[st(s)] || !prefs.src[srcOf(s)]) { hiddenStatus++; continue; }
     shown.push(s);
@@ -833,7 +842,7 @@ function render() {
   if (current && posOf(current)) want.add(spotKey(posOf(current)));
   for (const [id, m] of markers) if (!want.has(id)) { m.setMap(null); markers.delete(id); }
   for (const g of draw) {
-    g.list.sort((a, b) => (visited[a.i] ? 1 : 0) - (visited[b.i] ? 1 : 0) || nameOf(a).localeCompare(nameOf(b), "ko"));
+    g.list.sort((a, b) => (isDone(a) ? 1 : 0) - (isDone(b) ? 1 : 0) || nameOf(a).localeCompare(nameOf(b), "ko"));
     const { html, sz } = markerHtml(g.list, mode);
     const old = markers.get(g.k);
     if (old && old.__html === html) { old.__g = g; continue; }
@@ -868,7 +877,7 @@ function markerHtml(list, mode) {
   const f = focusId && list.some((s) => s.i === focusId);
   if (f) mode = "label";                   // 고른 매장은 작은 점 대신 이름이 붙은 핀으로
   const fc = f ? " focus" : "";
-  const n = list.length, v = list.every((s) => visited[s.i]) ? " visited" : "", bg = groupColor(list);
+  const n = list.length, v = list.every(isDone) ? " visited" : "", bg = groupColor(list);
   const grp = (n > 1 ? " grp" : "") + (list.every((s) => s.src === "k") ? " kk" : "");   // 카카오페이만 있는 자리는 네모
   if (mode === "dot") {
     const sz = n > 1 ? 13 : 10;
@@ -910,16 +919,16 @@ function openSpot(entries, near) {
   current = null;
   sheetFromList = false;
   closeMenu();
-  const list = spotList.entries.slice().sort((a, b) => (visited[a.s.i] ? 1 : 0) - (visited[b.s.i] ? 1 : 0) || a.d - b.d ||
+  const list = spotList.entries.slice().sort((a, b) => (isDone(a.s) ? 1 : 0) - (isDone(b.s) ? 1 : 0) || a.d - b.d ||
     nameOf(a.s).localeCompare(nameOf(b.s), "ko"));
-  const left = list.filter((e) => !visited[e.s.i]).length;
+  const left = list.filter((e) => !isDone(e.s)).length;
   $("sheetBody").innerHTML = `
     <h2>${spotList.near ? "이 근처" : "이 자리"} 매장 ${list.length}곳</h2>
     <div class="sub">${spotList.near ? "핀이 겹쳐 있는 매장들이에요." : "같은 건물·같은 좌표에 있는 매장들이에요."} 눌러서 고르세요.` +
     `${left < list.length ? ` · 방문 ${list.length - left}곳` : ""}</div>
     <div class="spot">${list.map(({ s }) => `
-      <div class="spotRow${visited[s.i] ? " v" : ""}" data-i="${esc(s.i)}"><i style="background:${STATUS[st(s)].color}"></i>
-        <div><b>${visited[s.i] ? "✓ " : ""}${esc(nameOf(s))}</b>${s.src === "k" ? '<span class="ktag">카카오</span>' : ""}
+      <div class="spotRow${isDone(s) ? " v" : ""}" data-i="${esc(s.i)}"><i style="background:${STATUS[st(s)].color}"></i>
+        <div><b>${isDone(s) ? "✓ " : ""}${esc(nameOf(s))}</b>${s.src === "k" ? '<span class="ktag">카카오</span>' : ""}
         <small>${esc(STATUS[st(s)].label)}${nameOf(s) !== s.n ? " · " + esc(s.n) : ""}${s.q ? " · " + esc(s.q) : ""}</small></div></div>`).join("")}</div>`;
   $("sheetBody").querySelectorAll(".spotRow").forEach((r) => (r.onclick = () => openSheet(byId.get(r.dataset.i), true)));
   $("sheet").scrollTop = 0;
@@ -945,7 +954,6 @@ function openSheet(s, fromList, fromHist) {
   const webUrl = "https://map.naver.com/p/search/" + encodeURIComponent(q);
   const appUrl = `nmap://search?query=${encodeURIComponent(q)}&appname=${app}`;
   const addrUrl = `nmap://search?query=${encodeURIComponent(addrQ)}&appname=${app}`;
-  const routeUrl = p ? `nmap://route/walk?dlat=${p[0]}&dlng=${p[1]}&dname=${encodeURIComponent(name)}&appname=${app}` : "";
   // DingTalk 앱 안에서 이 매장의 방문 등록 화면을 바로 열기 (S2 PMS 매장만, Store ID 가 있을 때)
   const ding = s.src !== "k";     // S2 PMS 매장만 (카카오페이 매장은 MAGA 에 없음)
   const isV = !!visited[s.i];
@@ -955,13 +963,15 @@ function openSheet(s, fromList, fromHist) {
   if (s.s === "weak" && s.k) info.push(s.ao
     ? `같은 주소에 있는 네이버 가게: <b>${esc(s.k)}</b> (이름이 달라요 — 상호가 바뀌었는지 확인해 주세요)`
     : `네이버 후보: <b>${esc(s.k)}</b> (같은 매장인지 확인해 주세요)`);
-  info.push(esc(s.ra || s.a || s.q || ""));
+  const addrText = s.ra || s.a || s.q || "";      // 네이버에서 확인된 주소가 있으면 그 주소
+  info.push(esc(addrText) + (addrText ? ` <button class="cpy" onclick="copyAddr('${s.i}')">복사</button>` : ""));
   if (s.qa && !s.ra) info.push(`한글 주소(추정): ${esc(s.qa)}`);
   if (s.cat) info.push(esc(s.cat));
   info.push(`핀 위치: ${posLabel(s)}${verified && s.d != null ? ` · ${s.src === "k" ? "주소 위치" : "PMS 좌표"}와 ${s.d.toLocaleString()}m 차이` : ""}`);
   info.push(`${esc(s.g)}${s.b ? " · 담당 " + esc(s.b) : ""}`);
   if (Array.isArray(s.qs) && s.qs.length && s.s !== "ok") info.push(`네이버에서 찾아본 검색어: ${s.qs.map(esc).join(" · ")}`);
   if (isV) info.push(`<b>방문 완료</b>: ${new Date(visited[s.i].t).toLocaleString("ko-KR")}${visited[s.i].u ? " · " + esc(visited[s.i].u) : ""}`);
+  if (s.mv) info.push(`<b>MAGA 방문 완료</b>: ${esc(s.mv)}${s.mu ? " · " + esc(s.mu) : ""}`);
   $("sheetBody").innerHTML = `
     ${sheetFromList ? `<button class="back" onclick="openSpot()">← 이 자리 매장 목록 (${spotList.entries.length}곳)</button>` : ""}
     ${sheetFromHist ? `<button class="back" onclick="openMyVisits()">← 내 방문 기록</button>` : ""}
@@ -972,13 +982,14 @@ function openSheet(s, fromList, fromHist) {
     ${s.s === "none" ? `<div class="sub" style="color:var(--none)">네이버 지도에서 같은 이름을 찾지 못했어요. 폐업·이전했거나 이름이 다를 수 있어요.</div>` : ""}
     ${info.map((t) => `<div class="sub">${t}</div>`).join("")}
     <div class="btns">
-      <a class="btn primary" href="${appUrl}">네이버 지도 앱</a>
-      <a class="btn" href="${addrUrl}">주소로 검색</a>
-      ${routeUrl ? `<a class="btn" href="${routeUrl}">도보 길찾기</a>` : `<span class="btn" style="opacity:.4">도보 길찾기</span>`}
-      <a class="btn" href="${webUrl}" target="_blank" rel="noopener">웹에서 검색</a>
-      ${ding ? `<a class="btn wide ding" href="${DING_LIST}" onclick="copyForDing('${s.i}')">DingTalk 매장 목록 열기 · 매장명 복사</a>
+      ${IS_MOBILE ? `<a class="btn primary" href="${appUrl}">네이버 지도 앱</a>
+      <a class="btn" href="${addrUrl}">주소로 검색</a>`
+        : `<a class="btn primary wide" href="${webUrl}" target="_blank" rel="noopener">웹에서 검색</a>`}
+      ${ding && IS_MOBILE ? `<a class="btn wide ding" href="${DING_LIST}" onclick="copyForDing('${s.i}')">DingTalk 매장 목록 열기 · 매장명 복사</a>
       <div class="dingHint">열리면 검색창에 붙여넣기 → 매장을 골라 평소처럼 등록</div>` : ""}
-      <button class="btn wide ${isV ? "" : "done"}" onclick="toggleVisited('${s.i}')">${isV ? "방문 취소 (핀 다시 보이기)" : "✓ 방문 완료 (핀 숨기기)"}</button>
+      ${s.src === "k" && s.pid ? `<a class="btn wide kqr" href="https://qr.kakaopay.com/${encodeURIComponent(s.pid)}" target="_blank" rel="noopener">카카오페이 QR 열기</a>` : ""}
+      ${s.mv ? `<span class="btn wide mvdone">MAGA에서 방문 완료된 매장이에요</span>`
+        : `<button class="btn wide ${isV ? "" : "done"}" onclick="toggleVisited('${s.i}')">${isV ? "방문 취소 (핀 다시 보이기)" : "✓ 방문 완료 (핀 숨기기)"}</button>`}
       ${TEAM_SYNC_URL ? `<button class="btn wide report" onclick="reportError('${s.i}')">이름·위치가 틀렸어요 (오류 제보)</button>` : ""}
     </div>`;
   $("sheet").scrollTop = 0;
@@ -1112,7 +1123,7 @@ function onSearch() {
     const hay = (s.n + (s.k || "") + (s.kg || "") + (s.e || "") + (s.a || "")).toLowerCase().replace(/\s+/g, "");
     if (hay.includes(raw)) { hit.push(s); if (hit.length >= 40) break; }
   }
-  box.innerHTML = hit.length ? hit.map((s) => `<div data-i="${esc(s.i)}">${visited[s.i] ? "✓ " : ""}${esc(nameOf(s))}${s.src === "k" ? '<span class="ktag">카카오</span>' : ""}<small>${esc(s.q || s.a)} · ${esc(s.g)}${posOf(s) ? "" : " · 위치 없음"}</small></div>`).join("")
+  box.innerHTML = hit.length ? hit.map((s) => `<div data-i="${esc(s.i)}">${isDone(s) ? "✓ " : ""}${esc(nameOf(s))}${s.src === "k" ? '<span class="ktag">카카오</span>' : ""}<small>${esc(s.q || s.a)} · ${esc(s.g)}${posOf(s) ? "" : " · 위치 없음"}</small></div>`).join("")
     : `<div>결과 없음${prefs.area ? " (선택한 상권 안에서 검색 중)" : ""}</div>`;
   box.style.display = "block";
   box.querySelectorAll("[data-i]").forEach((d) => d.onclick = () => {
@@ -1149,6 +1160,14 @@ function copyText(t) {
   } catch (e) {}
   try { if (navigator.clipboard) navigator.clipboard.writeText(t).catch(() => {}); } catch (e) {}
   return ok;
+}
+// 주소 복사 (네이버에서 확인된 주소가 있으면 그 주소)
+function copyAddr(id) {
+  const s = byId.get(id);
+  const t = s ? s.ra || s.a || s.q || "" : "";
+  if (!t) return;
+  copyText(t);
+  toast("주소를 복사했어요: " + t);
 }
 // DingTalk 버튼: 매장명(PMS 이름 그대로)을 복사하고 A&I MAGA 매장 목록으로 (링크 이동은 버튼 기본 동작)
 function copyForDing(id) {
@@ -1622,7 +1641,7 @@ window.addEventListener("resize", () => {
 /* ---------- 새 버전 자동 적용 ----------
    휴대폰은 페이지를 잠깐(GitHub는 최대 10분) 저장해 두고 그걸 보여 줘서, index.html 을 바꿔도 새로고침만으로는 안 바뀔 때가 있어요.
    열 때·다시 볼 때마다 서버의 index.html 버전을 확인해서, 다르면 새 버전으로 다시 열어요. (index.html 을 고칠 때마다 아래 버전도 바꿈) */
-const APP_VERSION = "2026-10-30.2";
+const APP_VERSION = "2026-10-30.4";
 let updLast = 0, publishing = false;
 const appBase = () => location.pathname.replace(/[^/]*$/, "");
 async function checkUpdate(atStart) {
