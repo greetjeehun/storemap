@@ -1197,7 +1197,7 @@ const PIN_MAX = 600;           // 이보다 많으면 작은 점으로 표시
 const LABEL_ZOOM = 17;         // 이 줌 이상에서 매장명 라벨 표시
 const CLUSTER_ZOOM = 15;       // 이 줌보다 많이 축소하면 지역별로 묶어 '남은 수'를 숫자 원으로
 const CLUSTER_MIN = 60;        // 화면에 이보다 많을 때만 묶음 (적으면 그냥 점으로)
-const CLUSTER_CELL = 150;      // 묶는 칸 크기(px) — 이 안에 든 매장을 한 원으로 (클수록 크게 묶임)
+const CLUSTER_CELL = 120;      // 묶는 칸 크기(px) — 이 안에 든 매장을 한 원으로 (클수록 크게 묶임)
 const LS_KEY = "storemap.visited.v1", LS_PREF = "storemap.prefs.v1", LS_USER = "storemap.user.v1",
       LS_QUEUE = "storemap.queue.v1", LS_TEAMCACHE = "storemap.team.v1", LS_MIGRATED = "storemap.migrated.v1",
       LS_ADMIN = "storemap.admin.v1", LS_SYNCLOG = "storemap.synclog.v1",
@@ -3334,7 +3334,7 @@ window.addEventListener("resize", () => {
 /* ---------- 새 버전 자동 적용 ----------
    휴대폰은 페이지를 잠깐(GitHub는 최대 10분) 저장해 두고 그걸 보여 줘서, index.html 을 바꿔도 새로고침만으로는 안 바뀔 때가 있어요.
    열 때·다시 볼 때마다 서버의 index.html 버전을 확인해서, 다르면 새 버전으로 다시 열어요. (index.html 을 고칠 때마다 아래 버전도 바꿈) */
-const APP_VERSION = "2026-11-25.3";
+const APP_VERSION = "2026-11-25.5";
 let updLast = 0, publishing = false;
 const appBase = () => location.pathname.replace(/[^/]*$/, "");
 async function checkUpdate(atStart) {
