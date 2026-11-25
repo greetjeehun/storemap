@@ -1330,7 +1330,7 @@ function prepStores() {
   const groups = new Map();
   if (!stores.some((s) => s.m)) {
     const place = new Map();
-    for (const s of stores) if (s.s === "ok" && s.k && inKorea(s.ny, s.nx)) {
+    for (const s of stores) if (s.s === "ok" && s.k && inKorea(s.ny, s.nx) && !s.out) {
       const k = s.k + "|" + s.ny.toFixed(5) + "," + s.nx.toFixed(5);
       if (!place.has(k)) place.set(k, []);
       place.get(k).push(s);
@@ -1361,6 +1361,8 @@ function prepStores() {
 }
 /* ---------- 칩 줄 조건 (S2 PMS · 카카오페이 · 네이버 확인 상태 · 방문한 매장 보기 · 상권) ---------- */
 const inArea = (s) => !prefs.area || s.g === prefs.area || !!(s._gs && s._gs.includes(prefs.area));
+// 보관 중인 매장(out: 이번 리스트에 없음)은 방문한 곳만 '방문 완료'로 남기고, 안 간 곳은 지도·숫자·검색에서 뺌
+const gone = (s) => !!s.out && !isDone(s);
 // 합친 가게(딩톡+카카오페이)는 안에 든 매장 중 하나라도 켜져 있으면 보여요
 const passKind = (s) => (!!prefs.src.p && !s._ko) || (!!prefs.src.k && !!s._hk);
 const passStatus = (s) => !!prefs.status[st(s)] || (!!s._mates && s._mates.some((m) => prefs.status[st(m)]));
@@ -1782,16 +1784,20 @@ function syncLabel() {
 function progress(text) { setHint(text); }
 // 팀용 데이터 파일 내용: 검색용 주소(ad)·방문자 계정(mu)·담당자(b)는 빼고, 지도가 붙인 값(_로 시작)도 뺌
 // 번호(pid)는 남겨요: PMS = Store ID, 카카오페이 = QR 번호 ('결제 테스트용 QR')
+// 보관 중인 매장(out: 이번 리스트에 없음)은 방문한 곳(MAGA 방문 · 팀 방문)만 넣음 → 방문 기록이 지도에 계속 남음
 async function teamDataText() {
   const list = dataSource === "stores.json" ? await (await fetch("stores.json", { cache: "no-cache" })).json() : stores;
   const uniq = new Map(list.map((s) => [s.i, s]));   // 같은 매장이 두 번 있으면 하나만 (지도와 똑같이)
-  return JSON.stringify([...uniq.values()], (k, v) => (k === "ad" || k === "mu" || k === "b" || k[0] === "_" ? undefined : v));
+  const keep = [...uniq.values()].filter((s) => !s.out || s.mv || visited[s.i]);
+  return { text: JSON.stringify(keep, (k, v) => (k === "ad" || k === "mu" || k === "b" || k[0] === "_" ? undefined : v)),
+           n: keep.length, arch: keep.filter((s) => s.out).length };
 }
 async function makeEnc(key) {
-  const bytes = await encryptStores(await teamDataText(), key);
+  const { text, n, arch } = await teamDataText();
+  const bytes = await encryptStores(text, key);
   const check = await decryptStores(bytes.buffer, key);
-  if (check.length !== stores.length) throw new Error("파일 확인 실패");
-  return { bytes, n: check.length };
+  if (check.length !== n) throw new Error("파일 확인 실패");
+  return { bytes, n, arch };
 }
 function download(bytes, name) {
   const a = document.createElement("a");
@@ -1830,13 +1836,14 @@ async function publishTeamUpdate() {
     progress("관리자 확인 중…");
     const { key, rotated } = await adminKey();
     progress("팀용 데이터 파일 만드는 중…");
-    const { bytes, n } = await makeEnc(key);
+    const { bytes, n, arch } = await makeEnc(key);
     download(bytes, "stores.enc");
-    let msg = `① stores.enc 저장 완료 (${sizeText(bytes.length)}, 매장 ${n.toLocaleString()}개)${rotated ? " — 새 데이터 열쇠로 잠갔어요" : ""}\n` +
+    let msg = `① stores.enc 저장 완료 (${sizeText(bytes.length)}, 매장 ${n.toLocaleString()}개${arch ? ` · 그중 리스트에서 빠진 방문 매장 ${arch.toLocaleString()}곳` : ""})` +
+              `${rotated ? " — 새 데이터 열쇠로 잠갔어요" : ""}\n` +
               "   → 다운로드 폴더의 stores.enc 를 GitHub 저장소에 올리세요.\n   → GitHub 에 stores.json 이 올라가 있다면 지우세요 (로그인 없이 볼 수 있어서).";
     // 2) 구글 시트 매장목록에 합치기
     const week = new Date().toLocaleDateString("sv-SE");   // YYYY-MM-DD
-    const rows = stores.map((s) => {
+    const rows = stores.filter((s) => !s.out).map((s) => {      // 보관 중인 매장은 시트에 이미 있어서 이번 리스트로 안 보냄
       const p = s._p || ["", ""];
       return [s.i, s.pid || "", s.n, (s.s === "ok" && s.k) ? s.k : (s.kg || ""), STATUS[st(s)].label, s.ra || s.a || s.q || "", s.g, p[0], p[1], srcLabel(s)];
     });
@@ -1967,7 +1974,8 @@ function diagText() {
   for (const s of stores) kinds[srcLabel(s)] = (kinds[srcLabel(s)] || 0) + 1;
   L.push(`매장 ${stores.length}: 확인됨 ${cnt.ok} / 확인필요 ${cnt.weak} / 없음 ${cnt.none} / 미확인 ${cnt.unk} / 주소좌표 ${geo}` +
          ` / ${Object.entries(kinds).map(([k, n]) => k + " " + n).join(" · ")}`);
-  L.push(`핀 ${hosts.length} (같은 가게 합침 ${hosts.filter((s) => s._mates).length}곳) / 칩 S2 ${prefs.src.p ? "켬" : "끔"}` +
+  L.push(`핀 ${hosts.length} (같은 가게 합침 ${hosts.filter((s) => s._mates).length}곳) / 보관 ${stores.filter((s) => s.out).length}` +
+         ` (보이는 곳 ${stores.filter((s) => s.out && !gone(s)).length}) / 칩 S2 ${prefs.src.p ? "켬" : "끔"}` +
          ` · 카카오 ${prefs.src.k ? "켬" : "끔"} · 방문한 매장 ${prefs.showVisited ? "보임" : "숨김"}`);
   const sample = stores.find((s) => s.s === "ok" && s.ny != null);
   L.push(`좌표 이상: 네이버 ${badNaver} / PMS ${badPms} / 표시 불가 ${noPos}` + (sample ? ` (예: ${sample.ny}, ${sample.nx})` : ""));
@@ -2005,11 +2013,12 @@ function positionOverlays() {
 /* ---------- 필터 UI ---------- */
 function buildAreaSelect() {
   const cnt = {}, kArea = {};
-  for (const s of stores) { cnt[s.g] = (cnt[s.g] || 0) + 1; if (s.src === "k") kArea[s.g] = true; }
+  let all = 0;
+  for (const s of stores) { if (gone(s)) continue; all++; cnt[s.g] = (cnt[s.g] || 0) + 1; if (s.src === "k") kArea[s.g] = true; }
   const areas = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a]);
   const opt = (a, label) => `<option value="${esc(a)}">${esc(label)} (${cnt[a].toLocaleString()})</option>`;
   const pa = areas.filter((a) => !kArea[a]), ka = areas.filter((a) => kArea[a]);
-  $("area").innerHTML = `<option value="">전체 상권 (${stores.length.toLocaleString()})</option>` + (ka.length
+  $("area").innerHTML = `<option value="">전체 상권 (${all.toLocaleString()})</option>` + (ka.length
     ? `<optgroup label="PMS 상권">${pa.map((a) => opt(a, a)).join("")}</optgroup>` +
       `<optgroup label="카카오페이 지역">${ka.map((a) => opt(a, a.replace(/^카카오 /, ""))).join("")}</optgroup>`
     : pa.map((a) => opt(a, a)).join(""));
@@ -2022,7 +2031,7 @@ const isOpen = (id) => $(id).classList.contains("open");
 // 칩 줄 (예전 그대로): S2 PMS · 카카오페이 켜고 끄기 / 네이버 확인 상태 숨기기 / 방문한 매장 보기
 // 숫자는 고른 상권 안의 곳 수 (같은 가게로 합친 핀은 한 곳 — S2 PMS·카카오페이 양쪽에 다 들어감)
 function buildChips() {
-  const base = hosts.filter(inArea);
+  const base = hosts.filter((s) => inArea(s) && !gone(s));
   const scnt = { p: 0, k: 0 }, cnt = { ok: 0, weak: 0, none: 0, unk: 0 };
   for (const s of base) {
     if (!s._ko) scnt.p++;
@@ -2053,7 +2062,7 @@ function filtersChanged() { savePrefs(); buildChips(); render(); }
 function fitArea() {
   if (locMode !== "off") setLocMode("off");
   resetRotation();
-  const pts = stores.filter((s) => s.g === prefs.area).map(posOf).filter(Boolean);
+  const pts = stores.filter((s) => s.g === prefs.area && !gone(s)).map(posOf).filter(Boolean);
   if (!pts.length) return;
   // 동떨어진 몇 개 때문에 지도가 너무 넓어지지 않게 상하위 2%는 제외
   const qt = (arr, f) => { const a = arr.slice().sort((m, n) => m - n); return a[Math.round(f * (a.length - 1))]; };
@@ -2105,7 +2114,7 @@ function scopeCounts() {
   const key = [prefs.area, prefs.src.p, prefs.src.k, visitVer, hosts.length].join("|");
   if (key !== statKey) {
     statKey = key; statTotal = 0; statDone = 0;
-    for (const s of hosts) if (inArea(s) && passKind(s)) { statTotal++; if (isDone(s)) statDone++; }
+    for (const s of hosts) if (!gone(s) && inArea(s) && passKind(s)) { statTotal++; if (isDone(s)) statDone++; }
   }
   return { total: statTotal, done: statDone };
 }
@@ -2128,7 +2137,7 @@ function render() {
   for (let k = k0; k < k1; k++) {
     const s = byLng[k];
     if (s.i === focusId) { if (inView(s)) focusS = s; continue; }   // 고른 매장은 방문했거나 필터로 숨긴 상태여도 보여줌
-    if (!passVisit(s) || !inView(s)) continue;
+    if (!passVisit(s) || gone(s) || !inView(s)) continue;
     if (!inArea(s)) { if (passAttr(s)) otherArea++; continue; }
     if (!passAttr(s)) { hiddenF++; continue; }
     shown.push(s);
@@ -2368,6 +2377,7 @@ function openSheet(s, fromList, fromHist) {
   const appUrl = `nmap://search?query=${encodeURIComponent(q)}&appname=${app}`;
   const addrUrl = `nmap://search?query=${encodeURIComponent(addrQ)}&appname=${app}`;
   const info = [];
+  if (s.out) info.push(`<b>이번 리스트에는 없는 매장</b> — 방문 기록을 남겨 두려고 보관 중이에요 (${esc(s.out)}에 리스트에서 빠짐)`);
   if (merged) info.push(`<b>같은 가게로 합친 매장 ${M.length}곳</b> — 아래에서 매장마다 딩톡 등록 · QR 테스트, 방문 완료는 한 번에`);
   else info.push(`${s.src === "k" ? "카카오페이" : "PMS"} 이름: ${esc(s.n)}`);   // 위 제목이 리스트 이름 그대로여도 항상 보여줌
   if (!merged && s.e && s.e !== name && s.e !== s.n) info.push(`영문: ${esc(s.e)}`);
@@ -2661,7 +2671,7 @@ function onSearch() {
   const hit = [], seen = new Set();
   for (const s of stores) {              // 합친 가게는 안에 든 매장 이름 어느 것으로 찾아도 그 핀 하나로
     const h = hostOf(s);
-    if (seen.has(h) || !inArea(h)) continue;
+    if (seen.has(h) || !inArea(h) || gone(h)) continue;
     const hay = (s.n + (s.k || "") + (s.kg || "") + (s.e || "") + (s.a || "")).toLowerCase().replace(/\s+/g, "");
     if (hay.includes(raw)) { seen.add(h); hit.push(h); if (hit.length >= 40) break; }
   }
@@ -3334,7 +3344,7 @@ window.addEventListener("resize", () => {
 /* ---------- 새 버전 자동 적용 ----------
    휴대폰은 페이지를 잠깐(GitHub는 최대 10분) 저장해 두고 그걸 보여 줘서, index.html 을 바꿔도 새로고침만으로는 안 바뀔 때가 있어요.
    열 때·다시 볼 때마다 서버의 index.html 버전을 확인해서, 다르면 새 버전으로 다시 열어요. (index.html 을 고칠 때마다 아래 버전도 바꿈) */
-const APP_VERSION = "2026-11-25.5";
+const APP_VERSION = "2026-11-25.6";
 let updLast = 0, publishing = false;
 const appBase = () => location.pathname.replace(/[^/]*$/, "");
 async function checkUpdate(atStart) {
