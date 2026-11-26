@@ -1454,9 +1454,16 @@ function deviceLabel() {
     : /CriOS|Chrome\//.test(ua) ? "Chrome" : /FxiOS|Firefox/.test(ua) ? "Firefox" : /Safari/.test(ua) ? "Safari" : "";
   return os + (br ? " · " + br : "");
 }
-async function api(body) {
-  const r = await fetch(TEAM_SYNC_URL, { method: "POST", body: JSON.stringify(body) });   // text/plain → 사전요청 없음
-  return readJson(r, body.op || "?");
+// ms: 이만큼 답이 없으면 그만 기다림 (방문 동기화만 — 보낸 기록은 서버가 같은 기록을 한 번만 저장해서 다시 보내도 괜찮음)
+async function api(body, ms) {
+  const ctl = ms && typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), ms) : 0;
+  try {
+    const r = await fetch(TEAM_SYNC_URL, { method: "POST", body: JSON.stringify(body), signal: ctl ? ctl.signal : undefined });   // text/plain → 사전요청 없음
+    return await readJson(r, body.op || "?");
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 const isSessionErr = (r) => !!r && (r.error === "session" || r.error === "mustchange");
 function sessionMsg(r) {
@@ -1729,7 +1736,7 @@ async function syncTeam() {
   const full = !teamVer || Date.now() - lastFull > 30 * 60000;     // 30분에 한 번은 전부 다시 받아서 맞춤
   let again = false, changed = false;
   try {
-    const r = await api({ op: "sync", sid: session.sid, since: full ? 0 : teamVer, events: batch });
+    const r = await api({ op: "sync", sid: session.sid, since: full ? 0 : teamVer, events: batch }, 60000);
     if (isSessionErr(r)) { syncing = false; return onSessionError(r); }
     sessBad = 0;
     if (r.error === "busy") { syncErr = "잠깐 붐빔 — 곧 다시 보낼게요"; setTimeout(syncTeam, 6000); }
@@ -1740,7 +1747,11 @@ async function syncTeam() {
       changed = takeVisits(r) || batch.length > 0;
       if (r.me && (r.me.name !== session.name || !!r.me.admin !== !!session.admin)) { session.name = r.me.name; session.admin = !!r.me.admin; saveAuth(); }
     }
-  } catch (e) { syncErr = "연결 안 됨" + (pending.length ? " (나중에 자동 전송)" : ""); }
+  } catch (e) {
+    const slow = e && e.name === "AbortError";
+    syncErr = (slow ? "응답이 늦음" : "연결 안 됨") + (pending.length ? " (나중에 자동 전송)" : "");
+    if (slow || !(e instanceof SyntaxError)) syncLog("동기화", slow ? "60초 동안 답 없음" : "연결 오류 " + ((e && e.message) || e));
+  }
   syncing = false;
   if (changed) recompute();
   if (map) {
@@ -3344,7 +3355,7 @@ window.addEventListener("resize", () => {
 /* ---------- 새 버전 자동 적용 ----------
    휴대폰은 페이지를 잠깐(GitHub는 최대 10분) 저장해 두고 그걸 보여 줘서, index.html 을 바꿔도 새로고침만으로는 안 바뀔 때가 있어요.
    열 때·다시 볼 때마다 서버의 index.html 버전을 확인해서, 다르면 새 버전으로 다시 열어요. (index.html 을 고칠 때마다 아래 버전도 바꿈) */
-const APP_VERSION = "2026-11-25.6";
+const APP_VERSION = "2026-11-26.1";
 let updLast = 0, publishing = false;
 const appBase = () => location.pathname.replace(/[^/]*$/, "");
 async function checkUpdate(atStart) {
